@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optispark"
+version = "0.1.0"
+authors = [
+  { name="Abhyudith M Bharadhwaj", email="abhyudith@gmail.com" },
+]
+description = "An autonomous, agentic optimization layer for PySpark DataFrames."
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "pyspark>=3.0.0",
+    "zstandard>=0.22.0",
+    "google-genai>=0.4.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/Radom12/OptiSpark"
+"Bug Tracker" = "https://github.com/Radom12/OptiSparkissues"
+
+[project.scripts]
+optispark = "optispark.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
