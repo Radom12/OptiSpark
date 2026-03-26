@@ -11,7 +11,7 @@
 
 # COMMAND ----------
 
-# %pip install git+https://github.com/Radom12/OptiSpark.git --quiet
+# %pip install git+https://github.com/Radom12/OptiSpark.git --force-reinstall --no-cache-dir --quiet
 # dbutils.library.restartPython()
 
 # COMMAND ----------
