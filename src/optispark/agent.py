@@ -1,49 +1,396 @@
-def chat(self, spark=None, query_id=None):
-        """Launches an interactive chat session with context awareness."""
-        print("🔍 Gathering cluster context and DAG metrics...")
-        
-        features = None
-        code_context = None
-        
-        # 1. Gather Context
-        if spark and query_id:
-            features = extract_features_from_system_tables(spark, query_id)
-            # Fetch the actual code executed from the system table
-            try:
-                row = spark.sql(f"SELECT statement_text FROM system.query.history WHERE query_id = '{query_id}'").collect()[0]
-                code_context = row['statement_text']
-            except Exception:
-                code_context = "Could not retrieve statement_text."
-        else:
-            features = extract_features_from_logs(self.log_dir)
-            
+"""
+OptiSpark Agent — The central orchestrator for the autonomous PySpark optimization agent.
+Supports both one-shot optimization (v0.1.0) and interactive REPL chat (v0.2.0).
+"""
+
+import os
+import json
+import textwrap
+from datetime import datetime
+
+from .reasoning import ReasoningEngine
+from .parser import extract_features_from_logs, extract_features_from_system_tables
+from .safety import validate_safety
+
+
+# ─── ANSI Color Palette ──────────────────────────────────────────────────────
+class _Colors:
+    RESET     = "\033[0m"
+    BOLD      = "\033[1m"
+    DIM       = "\033[2m"
+    ITALIC    = "\033[3m"
+    UNDERLINE = "\033[4m"
+
+    # Premium dark-mode palette
+    CYAN      = "\033[38;5;81m"
+    ORANGE    = "\033[38;5;214m"
+    GREEN     = "\033[38;5;114m"
+    RED       = "\033[38;5;203m"
+    MAGENTA   = "\033[38;5;176m"
+    YELLOW    = "\033[38;5;228m"
+    BLUE      = "\033[38;5;111m"
+    GRAY      = "\033[38;5;245m"
+    WHITE     = "\033[38;5;255m"
+
+    # Background accents
+    BG_DARK   = "\033[48;5;235m"
+    BG_BLUE   = "\033[48;5;23m"
+    BG_GREEN  = "\033[48;5;22m"
+    BG_RED    = "\033[48;5;52m"
+
+C = _Colors
+
+
+class OptiSpark:
+    """
+    The OptiSpark Agent.
+
+    Usage:
+        agent = OptiSpark(api_key="your_gemini_key")
+
+        # One-shot optimization (v0.1.0)
+        agent.optimize(spark=spark, query_id="...", target_df=df)
+
+        # Interactive REPL chat (v0.2.0)
+        agent.chat(spark=spark, query_id="...")
+    """
+
+    def __init__(self, api_key=None, log_dir=None):
+        """Initialize the OptiSpark agent.
+
+        Args:
+            api_key: Gemini API key. Falls back to GEMINI_API_KEY env var.
+            log_dir: Path to local Spark event logs (for Standard clusters).
+        """
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                f"{C.RED}✖ GEMINI_API_KEY not provided and not found in environment.{C.RESET}"
+            )
+        self.log_dir = log_dir
+        self.engine = ReasoningEngine(api_key=self.api_key)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # v0.1.0 — One-Shot Optimization
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def optimize(self, spark=None, query_id=None, target_df=None):
+        """Run a single-shot analysis and optimization cycle."""
+        print(f"\n{C.CYAN}{C.BOLD}⚡ OptiSpark One-Shot Analysis{C.RESET}")
+        print(f"{C.DIM}{'─' * 50}{C.RESET}\n")
+
+        # 1. Extract
+        print(f"  {C.BLUE}[1/4]{C.RESET} Extracting execution metrics...")
+        features = self._extract_context(spark, query_id)
         if not features:
-            print("⚠️ No execution metrics found. The agent will chat without DAG context.")
+            print(f"  {C.YELLOW}⚠  No metrics found. Aborting.{C.RESET}")
+            return
+
+        # 2. Diagnose
+        print(f"  {C.BLUE}[2/4]{C.RESET} Diagnosing bottlenecks via Gemini...")
+        diagnosis = self.engine.diagnose(features)
+        print(f"  {C.GREEN}✔  Diagnosis complete.{C.RESET}\n")
+        print(f"  {C.WHITE}{diagnosis}{C.RESET}\n")
+
+        # 3. Generate fix
+        print(f"  {C.BLUE}[3/4]{C.RESET} Generating optimized PySpark code...")
+        fix = self.engine.generate_fix(features)
+
+        # 4. Safety check
+        print(f"  {C.BLUE}[4/4]{C.RESET} Running Catalyst safety validation...")
+        is_safe, safety_msg = validate_safety(fix, target_df)
+        if is_safe:
+            print(f"  {C.GREEN}✔  {safety_msg}{C.RESET}\n")
+            _print_code_block(fix, title="Suggested Fix")
+        else:
+            print(f"  {C.RED}✖  {safety_msg}{C.RESET}")
+            print(f"  {C.YELLOW}⚠  Fix blocked by safety layer.{C.RESET}")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # v0.2.0 — Interactive REPL Chat
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def chat(self, spark=None, query_id=None):
+        """Launch the interactive OptiSpark REPL agent.
+
+        Args:
+            spark: Active SparkSession (for Databricks/system table access).
+            query_id: Databricks query ID to pull context from system tables.
+        """
+        _print_banner()
+
+        # ── 1. Context Gathering ──────────────────────────────────────────
+        print(f"  {C.BLUE}◆{C.RESET} Gathering cluster context and DAG metrics...", end="")
+        features = self._extract_context(spark, query_id)
+        code_context = self._fetch_statement_text(spark, query_id)
+
+        if features:
+            print(f" {C.GREEN}✔{C.RESET}")
+            skewed = [f for f in features if f.get("skew_ratio", 0) > 3.0]
+            print(f"  {C.GRAY}├─ Stages analyzed: {len(features)}{C.RESET}")
+            if skewed:
+                print(f"  {C.ORANGE}├─ ⚠ Skewed stages: {len(skewed)}{C.RESET}")
+            print(f"  {C.GRAY}└─ Code context: {'Available' if code_context else 'N/A'}{C.RESET}")
+        else:
+            print(f" {C.YELLOW}⚠{C.RESET}")
+            print(f"  {C.YELLOW}└─ No metrics found — chatting without DAG context.{C.RESET}")
             features = {"status": "No metrics available"}
 
-        # 2. Initialize Chat
-        print("💬 OptiSpark Agent is online. Type 'exit' to quit.\n")
-        chat_session = self.engine.start_chat(features, code_context)
-        
-        # 3. The REPL Loop
+        # ── 2. Initialize Chat Session ────────────────────────────────────
+        print(f"\n  {C.BLUE}◆{C.RESET} Initializing Gemini chat session...", end="")
+        try:
+            chat_session = self.engine.start_chat(features, code_context)
+            print(f" {C.GREEN}✔{C.RESET}")
+        except Exception as e:
+            print(f" {C.RED}✖{C.RESET}")
+            print(f"\n  {C.RED}Error: {str(e)}{C.RESET}")
+            return
+
+        # ── 3. Session State ──────────────────────────────────────────────
+        session_state = {
+            "message_count": 0,
+            "start_time": datetime.now(),
+            "features": features,
+            "code_context": code_context,
+        }
+
+        _print_ready_prompt()
+
+        # ── 4. REPL Loop ─────────────────────────────────────────────────
         while True:
             try:
-                user_input = input("\n👤 You: ")
-                if user_input.lower() in ['exit', 'quit', 'q']:
-                    print("👋 OptiSpark shutting down.")
-                    break
-                
+                user_input = input(f"\n  {C.CYAN}{C.BOLD}❯{C.RESET} ")
+
+                # Handle empty input
                 if not user_input.strip():
                     continue
-                    
-                print("🤖 OptiSpark is thinking...")
+
+                # Handle commands
+                cmd = user_input.strip().lower()
+                if cmd in ("exit", "quit", "q", "/exit", "/quit"):
+                    _print_goodbye(session_state)
+                    break
+                elif cmd in ("/help", "/h"):
+                    _print_help()
+                    continue
+                elif cmd in ("/metrics", "/m"):
+                    _print_metrics(session_state)
+                    continue
+                elif cmd in ("/code", "/c"):
+                    _print_code_context(session_state)
+                    continue
+                elif cmd in ("/clear",):
+                    _clear_screen()
+                    _print_banner()
+                    _print_ready_prompt()
+                    continue
+
+                # Send to Gemini
+                session_state["message_count"] += 1
+                _print_thinking()
+
                 response = chat_session.send_message(user_input)
-                
-                print(f"\n✨ OptiSpark:\n{response.text}")
-                print("-" * 50)
-                
+                _print_response(response.text, session_state["message_count"])
+
             except KeyboardInterrupt:
-                print("\n👋 OptiSpark shutting down.")
+                print()
+                _print_goodbye(session_state)
                 break
             except Exception as e:
-                print(f"\n❌ Error connecting to Reasoning Engine: {str(e)}")
+                _print_error(str(e))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Private Helpers
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _extract_context(self, spark=None, query_id=None):
+        """Extract DAG features from the best available source."""
+        if spark and query_id:
+            return extract_features_from_system_tables(spark, query_id)
+        elif self.log_dir:
+            return extract_features_from_logs(self.log_dir)
+        return None
+
+    def _fetch_statement_text(self, spark=None, query_id=None):
+        """Fetch the PySpark statement_text from Databricks system tables."""
+        if not spark or not query_id:
+            return None
+        try:
+            row = spark.sql(
+                f"SELECT statement_text FROM system.query.history "
+                f"WHERE query_id = '{query_id}'"
+            ).collect()[0]
+            return row["statement_text"]
+        except Exception:
+            return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UI Rendering Functions — Premium Terminal UX
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _print_banner():
+    """Print the OptiSpark welcome banner."""
+    banner = f"""
+{C.CYAN}{C.BOLD}
+    ╔═══════════════════════════════════════════════════════════╗
+    ║                                                           ║
+    ║     ⚡  O P T I S P A R K   v0.2.0                        ║
+    ║        Interactive PySpark Performance Agent               ║
+    ║                                                           ║
+    ╚═══════════════════════════════════════════════════════════╝{C.RESET}
+{C.GRAY}    Powered by Gemini · Catalyst Safety Layer · DAG Analytics{C.RESET}
+"""
+    print(banner)
+
+
+def _print_ready_prompt():
+    """Print the ready message after initialization."""
+    print(f"""
+{C.DIM}  {'─' * 55}{C.RESET}
+{C.GREEN}{C.BOLD}  ✦ Agent Online{C.RESET} — Ask about your Spark performance.
+{C.GRAY}    Type {C.WHITE}/help{C.GRAY} for commands · {C.WHITE}exit{C.GRAY} to quit{C.RESET}
+{C.DIM}  {'─' * 55}{C.RESET}""")
+
+
+def _print_help():
+    """Print the help menu."""
+    print(f"""
+{C.CYAN}{C.BOLD}  ┌─ Commands ──────────────────────────────────────────┐{C.RESET}
+{C.WHITE}  │  /help, /h       {C.GRAY}Show this help menu               {C.WHITE}│{C.RESET}
+{C.WHITE}  │  /metrics, /m    {C.GRAY}Show current DAG metrics          {C.WHITE}│{C.RESET}
+{C.WHITE}  │  /code, /c       {C.GRAY}Show the captured PySpark code    {C.WHITE}│{C.RESET}
+{C.WHITE}  │  /clear          {C.GRAY}Clear the screen                  {C.WHITE}│{C.RESET}
+{C.WHITE}  │  exit, quit, q   {C.GRAY}End the session                   {C.WHITE}│{C.RESET}
+{C.CYAN}  └────────────────────────────────────────────────────┘{C.RESET}
+
+{C.GRAY}  💡 Try asking:{C.RESET}
+{C.ITALIC}{C.MAGENTA}     "What bottlenecks do you see in my join?"
+     "How can I fix the data skew in stage 4?"
+     "Rewrite my query to avoid shuffle spill"{C.RESET}
+""")
+
+
+def _print_metrics(session_state):
+    """Print the current DAG metrics in a formatted table."""
+    features = session_state.get("features")
+    if not features or (isinstance(features, dict) and features.get("status")):
+        print(f"\n  {C.YELLOW}⚠  No DAG metrics available for this session.{C.RESET}")
+        return
+
+    print(f"\n{C.CYAN}{C.BOLD}  ┌─ DAG Metrics ────────────────────────────────────────┐{C.RESET}")
+    print(f"  {C.WHITE}│  {'Stage':<12} {'Skew Ratio':<15} {'Status':<20}  │{C.RESET}")
+    print(f"  {C.DIM}│  {'─'*12} {'─'*15} {'─'*20}  │{C.RESET}")
+    for f in features:
+        stage = str(f.get("stage_id", "?"))
+        ratio = f.get("skew_ratio", 0)
+        if ratio > 5.0:
+            status = f"{C.RED}● Critical Skew{C.RESET}"
+            ratio_str = f"{C.RED}{ratio:.2f}{C.RESET}"
+        elif ratio > 3.0:
+            status = f"{C.ORANGE}● High Skew{C.RESET}"
+            ratio_str = f"{C.ORANGE}{ratio:.2f}{C.RESET}"
+        elif ratio > 1.5:
+            status = f"{C.YELLOW}● Moderate{C.RESET}"
+            ratio_str = f"{C.YELLOW}{ratio:.2f}{C.RESET}"
+        else:
+            status = f"{C.GREEN}● Healthy{C.RESET}"
+            ratio_str = f"{C.GREEN}{ratio:.2f}{C.RESET}"
+        print(f"  {C.WHITE}│  {stage:<12} {ratio_str:<24} {status:<29}  │{C.RESET}")
+    print(f"{C.CYAN}  └────────────────────────────────────────────────────┘{C.RESET}")
+
+
+def _print_code_context(session_state):
+    """Print the captured PySpark code context."""
+    code = session_state.get("code_context")
+    if not code:
+        print(f"\n  {C.YELLOW}⚠  No code context captured for this session.{C.RESET}")
+        return
+    _print_code_block(code, title="Captured PySpark Code")
+
+
+def _print_code_block(code, title="Code"):
+    """Render a formatted code block in the terminal."""
+    print(f"\n  {C.BLUE}{C.BOLD}┌─ {title} {'─' * max(1, 48 - len(title))}┐{C.RESET}")
+    for line in code.strip().split("\n"):
+        print(f"  {C.BLUE}│{C.RESET}  {C.WHITE}{line}{C.RESET}")
+    print(f"  {C.BLUE}└{'─' * 52}┘{C.RESET}")
+
+
+def _print_thinking():
+    """Print a thinking indicator."""
+    print(f"\n  {C.MAGENTA}◇{C.RESET} {C.DIM}Analyzing with Gemini...{C.RESET}")
+
+
+def _print_response(text, msg_num):
+    """Render the AI response with formatting."""
+    print(f"\n  {C.ORANGE}{C.BOLD}┌─ OptiSpark #{msg_num} {'─' * 38}┐{C.RESET}")
+
+    # Process the response line by line
+    in_code_block = False
+    lines = text.strip().split("\n")
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Toggle code block state
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            if in_code_block:
+                lang = stripped[3:].strip() or "pyspark"
+                print(f"  {C.ORANGE}│{C.RESET}")
+                print(f"  {C.ORANGE}│{C.RESET}  {C.BLUE}{C.DIM}── {lang} ──{C.RESET}")
+            else:
+                print(f"  {C.ORANGE}│{C.RESET}  {C.BLUE}{C.DIM}──────────{C.RESET}")
+                print(f"  {C.ORANGE}│{C.RESET}")
+            continue
+
+        if in_code_block:
+            print(f"  {C.ORANGE}│{C.RESET}  {C.GREEN}  {line}{C.RESET}")
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            # Bold headers
+            clean = stripped.strip("*").strip()
+            print(f"  {C.ORANGE}│{C.RESET}  {C.WHITE}{C.BOLD}{clean}{C.RESET}")
+        elif stripped.startswith("- ") or stripped.startswith("• "):
+            # Bullet points
+            print(f"  {C.ORANGE}│{C.RESET}  {C.CYAN}  •{C.RESET} {C.WHITE}{stripped[2:]}{C.RESET}")
+        elif stripped.startswith(("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")):
+            # Numbered lists
+            num, rest = stripped.split(".", 1)
+            print(f"  {C.ORANGE}│{C.RESET}  {C.CYAN}  {num}.{C.RESET}{C.WHITE}{rest}{C.RESET}")
+        else:
+            # Wrap long lines for readability
+            wrapped = textwrap.fill(line, width=70, subsequent_indent="    ")
+            for wline in wrapped.split("\n"):
+                print(f"  {C.ORANGE}│{C.RESET}  {C.WHITE}{wline}{C.RESET}")
+
+    print(f"  {C.ORANGE}└{'─' * 52}┘{C.RESET}")
+
+
+def _print_error(error_msg):
+    """Print a formatted error message."""
+    print(f"\n  {C.RED}{C.BOLD}┌─ Error ───────────────────────────────────────────┐{C.RESET}")
+    print(f"  {C.RED}│{C.RESET}  {error_msg}")
+    print(f"  {C.RED}│{C.RESET}  {C.GRAY}Try rephrasing your question or type /help.{C.RESET}")
+    print(f"  {C.RED}└{'─' * 52}┘{C.RESET}")
+
+
+def _print_goodbye(session_state):
+    """Print session summary on exit."""
+    elapsed = datetime.now() - session_state["start_time"]
+    mins = int(elapsed.total_seconds() // 60)
+    secs = int(elapsed.total_seconds() % 60)
+    msgs = session_state["message_count"]
+
+    print(f"""
+{C.DIM}  {'─' * 55}{C.RESET}
+{C.CYAN}{C.BOLD}  ✦ Session Complete{C.RESET}
+{C.GRAY}    Messages: {C.WHITE}{msgs}{C.GRAY} · Duration: {C.WHITE}{mins}m {secs}s{C.RESET}
+{C.GRAY}    Thank you for using {C.CYAN}OptiSpark{C.GRAY}. ⚡{C.RESET}
+{C.DIM}  {'─' * 55}{C.RESET}
+""")
+
+
+def _clear_screen():
+    """Clear the terminal screen."""
+    os.system("cls" if os.name == "nt" else "clear")

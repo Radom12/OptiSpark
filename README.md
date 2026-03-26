@@ -5,14 +5,62 @@ OptiSpark is an agentic tool that monitors Spark execution, identifies performan
 
 ## Features
 - 🔍 **Hybrid Extraction**: Supports Standard clusters (EventLogs) and Databricks Serverless (System Tables).
-- 🧠 **LLM-Powered Reasoning**: Uses Gemini 3 Flash to diagnose root causes.
+- 🧠 **LLM-Powered Reasoning**: Uses Gemini Flash to diagnose root causes and generate exact PySpark fixes.
 - 🛡️ **Catalyst Safety Layer**: Programmatically validates AI-generated code against DataFrame metadata to prevent OOMs.
+- 💬 **Interactive REPL Agent** *(v0.2.0)*: Chat with OptiSpark in your notebook — ask questions, get context-aware fixes.
 
 ## Quick Start
+
+### One-Shot Optimization (v0.1.0)
 ```python
 from optispark import OptiSpark
 
 agent = OptiSpark(api_key="your_gemini_key")
-
-# Analyze a specific query
 agent.optimize(spark=spark, query_id="your_query_id", target_df=your_df)
+```
+
+### Interactive Chat Agent (v0.2.0)
+```python
+from optispark import OptiSpark
+
+agent = OptiSpark(api_key="your_gemini_key")
+agent.chat(spark=spark, query_id="your_query_id")
+
+# Available commands inside the REPL:
+#   /help      — Show available commands
+#   /metrics   — Display DAG metrics for the current session
+#   /code      — Show the captured PySpark statement_text
+#   /clear     — Clear the screen
+#   exit       — End the session
+```
+
+### CLI Usage
+```bash
+# Set your API key
+export GEMINI_API_KEY="your_key"
+
+# One-shot analysis
+optispark analyze --log-dir /path/to/spark/logs
+
+# Interactive chat
+optispark chat --log-dir /path/to/spark/logs
+```
+
+## Installation
+```bash
+pip install git+https://github.com/Radom12/OptiSpark.git
+```
+
+## Architecture
+```
+src/optispark/
+├── agent.py       # Central orchestrator (optimize + chat REPL)
+├── reasoning.py   # Gemini-powered diagnosis and chat engine
+├── parser.py      # Hybrid metric extraction (EventLogs + System Tables)
+├── safety.py      # Catalyst safety validation layer
+├── listener.py    # Real-time Spark listener for task metrics
+└── cli.py         # CLI entry point
+```
+
+## License
+MIT
