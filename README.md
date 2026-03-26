@@ -24,12 +24,21 @@ agent.optimize(spark=spark, query_id="your_query_id", target_df=your_df)
 from optispark import OptiSpark
 
 agent = OptiSpark(api_key="your_gemini_key")
-agent.chat(spark=spark, query_id="your_query_id")
 
+# Just pass the DataFrame you're having trouble with!
+agent.chat(df=my_problematic_df)
+
+# The agent will automatically introspect:
+#   - Schema (column names, types)
+#   - Catalyst execution plan
+#   - Partition count
+#   - Estimated size from Catalyst stats
+#
 # Available commands inside the REPL:
 #   /help      — Show available commands
-#   /metrics   — Display DAG metrics for the current session
-#   /code      — Show the captured PySpark statement_text
+#   /context   — Display DataFrame context (schema, partitions, size)
+#   /plan      — Show the Catalyst execution plan
+#   /schema    — Show the full DataFrame schema
 #   /clear     — Clear the screen
 #   exit       — End the session
 ```

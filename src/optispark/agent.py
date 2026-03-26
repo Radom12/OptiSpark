@@ -52,7 +52,7 @@ class OptiSpark:
         agent.optimize(spark=spark, query_id="...", target_df=df)
 
         # Interactive REPL chat (v0.2.0)
-        agent.chat(spark=spark, query_id="...")
+        agent.chat(df=my_problematic_df)
     """
 
     def __init__(self, api_key=None, log_dir=None):
@@ -110,36 +110,68 @@ class OptiSpark:
     # v0.2.0 — Interactive REPL Chat
     # ═══════════════════════════════════════════════════════════════════════
 
-    def chat(self, spark=None, query_id=None):
+    def chat(self, df=None, spark=None, query_id=None):
         """Launch the interactive OptiSpark REPL agent.
 
+        Pass the DataFrame you're having trouble with — the agent will
+        introspect it (schema, execution plan, partitions, Catalyst stats)
+        and use that context to diagnose and fix your Spark performance issues.
+
         Args:
-            spark: Active SparkSession (for Databricks/system table access).
-            query_id: Databricks query ID to pull context from system tables.
+            df: The PySpark DataFrame you want the agent to analyze and fix.
+            spark: (Optional) Active SparkSession — inferred from df if not provided.
+            query_id: (Optional, legacy) Databricks query ID for system table lookup.
         """
         _print_banner()
 
         # ── 1. Context Gathering ──────────────────────────────────────────
-        print(f"  {C.BLUE}◆{C.RESET} Gathering cluster context and DAG metrics...", end="")
-        features = self._extract_context(spark, query_id)
-        code_context = self._fetch_statement_text(spark, query_id)
+        print(f"  {C.BLUE}◆{C.RESET} Introspecting DataFrame...", end="")
 
-        if features:
+        df_context = None
+        features = None
+        code_context = None
+
+        if df is not None:
+            # Primary path: extract everything from the live DataFrame
+            df_context = self._introspect_dataframe(df)
             print(f" {C.GREEN}✔{C.RESET}")
-            skewed = [f for f in features if f.get("skew_ratio", 0) > 3.0]
-            print(f"  {C.GRAY}├─ Stages analyzed: {len(features)}{C.RESET}")
-            if skewed:
-                print(f"  {C.ORANGE}├─ ⚠ Skewed stages: {len(skewed)}{C.RESET}")
-            print(f"  {C.GRAY}└─ Code context: {'Available' if code_context else 'N/A'}{C.RESET}")
+            print(f"  {C.GRAY}├─ Columns: {df_context['num_columns']}{C.RESET}")
+            print(f"  {C.GRAY}├─ Partitions: {df_context['num_partitions']}{C.RESET}")
+            size_mb = df_context.get('estimated_size_mb')
+            if size_mb is not None:
+                print(f"  {C.GRAY}├─ Estimated size: {size_mb:.2f} MB{C.RESET}")
+            print(f"  {C.GRAY}└─ Execution plan: Captured{C.RESET}")
+        elif spark and query_id:
+            # Legacy path: system table lookup
+            features = self._extract_context(spark, query_id)
+            code_context = self._fetch_statement_text(spark, query_id)
+            if features:
+                print(f" {C.GREEN}✔{C.RESET}")
+                skewed = [f for f in features if f.get("skew_ratio", 0) > 3.0]
+                print(f"  {C.GRAY}├─ Stages: {len(features)}{C.RESET}")
+                if skewed:
+                    print(f"  {C.ORANGE}├─ ⚠ Skewed: {len(skewed)}{C.RESET}")
+                print(f"  {C.GRAY}└─ Code: {'Available' if code_context else 'N/A'}{C.RESET}")
+            else:
+                print(f" {C.YELLOW}⚠{C.RESET}")
+                print(f"  {C.YELLOW}└─ No metrics found.{C.RESET}")
+        elif self.log_dir:
+            features = extract_features_from_logs(self.log_dir)
+            if features:
+                print(f" {C.GREEN}✔{C.RESET} (from event logs)")
+            else:
+                print(f" {C.YELLOW}⚠{C.RESET}")
         else:
             print(f" {C.YELLOW}⚠{C.RESET}")
-            print(f"  {C.YELLOW}└─ No metrics found — chatting without DAG context.{C.RESET}")
-            features = {"status": "No metrics available"}
+            print(f"  {C.YELLOW}└─ No DataFrame or context provided — chatting in general mode.{C.RESET}")
+
+        # Build the combined context for the LLM
+        combined_context = self._build_combined_context(df_context, features, code_context)
 
         # ── 2. Initialize Chat Session ────────────────────────────────────
         print(f"\n  {C.BLUE}◆{C.RESET} Initializing Gemini chat session...", end="")
         try:
-            chat_session = self.engine.start_chat(features, code_context)
+            chat_session = self.engine.start_chat(combined_context)
             print(f" {C.GREEN}✔{C.RESET}")
         except Exception as e:
             print(f" {C.RED}✖{C.RESET}")
@@ -150,6 +182,7 @@ class OptiSpark:
         session_state = {
             "message_count": 0,
             "start_time": datetime.now(),
+            "df_context": df_context,
             "features": features,
             "code_context": code_context,
         }
@@ -173,11 +206,14 @@ class OptiSpark:
                 elif cmd in ("/help", "/h"):
                     _print_help()
                     continue
-                elif cmd in ("/metrics", "/m"):
-                    _print_metrics(session_state)
+                elif cmd in ("/metrics", "/m", "/context"):
+                    _print_context(session_state)
                     continue
-                elif cmd in ("/code", "/c"):
-                    _print_code_context(session_state)
+                elif cmd in ("/plan", "/p"):
+                    _print_plan(session_state)
+                    continue
+                elif cmd in ("/schema", "/s"):
+                    _print_schema(session_state)
                     continue
                 elif cmd in ("/clear",):
                     _clear_screen()
@@ -203,6 +239,63 @@ class OptiSpark:
     # Private Helpers
     # ═══════════════════════════════════════════════════════════════════════
 
+    def _introspect_dataframe(self, df):
+        """Extract rich metadata from a live PySpark DataFrame using Catalyst."""
+        context = {}
+
+        # Schema
+        try:
+            schema_fields = []
+            for field in df.schema.fields:
+                schema_fields.append({
+                    "name": field.name,
+                    "type": str(field.dataType),
+                    "nullable": field.nullable,
+                })
+            context["schema"] = schema_fields
+            context["num_columns"] = len(schema_fields)
+        except Exception:
+            context["schema"] = "Could not extract schema"
+            context["num_columns"] = "?"
+
+        # Execution plan (the explain output)
+        try:
+            context["execution_plan"] = df._jdf.queryExecution().toString()
+        except Exception:
+            try:
+                # Fallback: capture explain as a string
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    df.explain(mode="extended")
+                context["execution_plan"] = buf.getvalue()
+            except Exception:
+                context["execution_plan"] = "Could not extract execution plan"
+
+        # Partition count
+        try:
+            context["num_partitions"] = df.rdd.getNumPartitions()
+        except Exception:
+            context["num_partitions"] = "?"
+
+        # Catalyst estimated size (from the optimized logical plan)
+        try:
+            size_bytes = df._jdf.queryExecution().optimizedPlan().stats().sizeInBytes()
+            context["estimated_size_bytes"] = int(size_bytes)
+            context["estimated_size_mb"] = round(int(size_bytes) / (1024 * 1024), 4)
+        except Exception:
+            context["estimated_size_bytes"] = None
+            context["estimated_size_mb"] = None
+
+        # Logical plan string (more readable)
+        try:
+            context["logical_plan"] = df._jdf.queryExecution().optimizedPlan().toString()
+        except Exception:
+            context["logical_plan"] = None
+
+        return context
+
     def _extract_context(self, spark=None, query_id=None):
         """Extract DAG features from the best available source."""
         if spark and query_id:
@@ -223,6 +316,19 @@ class OptiSpark:
             return row["statement_text"]
         except Exception:
             return None
+
+    def _build_combined_context(self, df_context=None, features=None, code_context=None):
+        """Merge all available context into a single dict for the LLM."""
+        context = {}
+        if df_context:
+            context["dataframe"] = df_context
+        if features:
+            context["dag_metrics"] = features
+        if code_context:
+            context["statement_text"] = code_context
+        if not context:
+            context["status"] = "No context available — general mode"
+        return context
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -258,55 +364,113 @@ def _print_help():
     print(f"""
 {C.CYAN}{C.BOLD}  ┌─ Commands ──────────────────────────────────────────┐{C.RESET}
 {C.WHITE}  │  /help, /h       {C.GRAY}Show this help menu               {C.WHITE}│{C.RESET}
-{C.WHITE}  │  /metrics, /m    {C.GRAY}Show current DAG metrics          {C.WHITE}│{C.RESET}
-{C.WHITE}  │  /code, /c       {C.GRAY}Show the captured PySpark code    {C.WHITE}│{C.RESET}
+{C.WHITE}  │  /context, /m    {C.GRAY}Show DataFrame & session context  {C.WHITE}│{C.RESET}
+{C.WHITE}  │  /plan, /p       {C.GRAY}Show the Catalyst execution plan  {C.WHITE}│{C.RESET}
+{C.WHITE}  │  /schema, /s     {C.GRAY}Show the DataFrame schema         {C.WHITE}│{C.RESET}
 {C.WHITE}  │  /clear          {C.GRAY}Clear the screen                  {C.WHITE}│{C.RESET}
 {C.WHITE}  │  exit, quit, q   {C.GRAY}End the session                   {C.WHITE}│{C.RESET}
 {C.CYAN}  └────────────────────────────────────────────────────┘{C.RESET}
 
 {C.GRAY}  💡 Try asking:{C.RESET}
-{C.ITALIC}{C.MAGENTA}     "What bottlenecks do you see in my join?"
-     "How can I fix the data skew in stage 4?"
-     "Rewrite my query to avoid shuffle spill"{C.RESET}
+{C.ITALIC}{C.MAGENTA}     "What bottlenecks do you see in my DataFrame?"
+     "Fix the data skew in my join"
+     "Optimize this query to reduce shuffle"{C.RESET}
 """)
 
 
-def _print_metrics(session_state):
-    """Print the current DAG metrics in a formatted table."""
+def _print_context(session_state):
+    """Print all available context (DataFrame + DAG metrics)."""
+    df_ctx = session_state.get("df_context")
     features = session_state.get("features")
-    if not features or (isinstance(features, dict) and features.get("status")):
-        print(f"\n  {C.YELLOW}⚠  No DAG metrics available for this session.{C.RESET}")
+    code_ctx = session_state.get("code_context")
+
+    has_something = False
+
+    # DataFrame context
+    if df_ctx:
+        has_something = True
+        print(f"\n{C.CYAN}{C.BOLD}  ┌─ DataFrame Context ────────────────────────────────┐{C.RESET}")
+        print(f"  {C.WHITE}│{C.RESET}  Columns:    {C.WHITE}{df_ctx.get('num_columns', '?')}{C.RESET}")
+        print(f"  {C.WHITE}│{C.RESET}  Partitions: {C.WHITE}{df_ctx.get('num_partitions', '?')}{C.RESET}")
+        size_mb = df_ctx.get("estimated_size_mb")
+        if size_mb is not None:
+            print(f"  {C.WHITE}│{C.RESET}  Est. Size:  {C.WHITE}{size_mb:.4f} MB{C.RESET}")
+        print(f"  {C.WHITE}│{C.RESET}  Plan:       {C.GREEN}Captured{C.RESET}")
+        # Quick schema summary
+        schema = df_ctx.get("schema")
+        if isinstance(schema, list) and schema:
+            print(f"  {C.DIM}│  {'─' * 47}{C.RESET}")
+            print(f"  {C.WHITE}│{C.RESET}  {C.GRAY}{'Column':<25} {'Type':<22}{C.RESET}")
+            for field in schema[:10]:  # Cap at 10 to avoid flooding
+                print(f"  {C.WHITE}│{C.RESET}  {C.WHITE}{field['name']:<25}{C.RESET} {C.GRAY}{field['type']:<22}{C.RESET}")
+            if len(schema) > 10:
+                print(f"  {C.WHITE}│{C.RESET}  {C.DIM}... and {len(schema) - 10} more columns{C.RESET}")
+        print(f"{C.CYAN}  └────────────────────────────────────────────────────┘{C.RESET}")
+
+    # DAG metrics (legacy)
+    if features and isinstance(features, list):
+        has_something = True
+        print(f"\n{C.CYAN}{C.BOLD}  ┌─ DAG Metrics ────────────────────────────────────────┐{C.RESET}")
+        print(f"  {C.WHITE}│  {'Stage':<12} {'Skew Ratio':<15} {'Status':<20}  │{C.RESET}")
+        print(f"  {C.DIM}│  {'─' * 12} {'─' * 15} {'─' * 20}  │{C.RESET}")
+        for f in features:
+            stage = str(f.get("stage_id", "?"))
+            ratio = f.get("skew_ratio", 0)
+            if ratio > 5.0:
+                status = f"{C.RED}● Critical Skew{C.RESET}"
+                ratio_str = f"{C.RED}{ratio:.2f}{C.RESET}"
+            elif ratio > 3.0:
+                status = f"{C.ORANGE}● High Skew{C.RESET}"
+                ratio_str = f"{C.ORANGE}{ratio:.2f}{C.RESET}"
+            elif ratio > 1.5:
+                status = f"{C.YELLOW}● Moderate{C.RESET}"
+                ratio_str = f"{C.YELLOW}{ratio:.2f}{C.RESET}"
+            else:
+                status = f"{C.GREEN}● Healthy{C.RESET}"
+                ratio_str = f"{C.GREEN}{ratio:.2f}{C.RESET}"
+            print(f"  {C.WHITE}│  {stage:<12} {ratio_str:<24} {status:<29}  │{C.RESET}")
+        print(f"{C.CYAN}  └────────────────────────────────────────────────────┘{C.RESET}")
+
+    # Code context
+    if code_ctx:
+        has_something = True
+        _print_code_block(code_ctx, title="Captured PySpark Code")
+
+    if not has_something:
+        print(f"\n  {C.YELLOW}⚠  No context available for this session.{C.RESET}")
+
+
+def _print_plan(session_state):
+    """Print the Catalyst execution plan."""
+    df_ctx = session_state.get("df_context")
+    if not df_ctx:
+        print(f"\n  {C.YELLOW}⚠  No DataFrame was provided — no execution plan available.{C.RESET}")
+        return
+    plan = df_ctx.get("execution_plan", "Not captured")
+    if plan == "Could not extract execution plan":
+        print(f"\n  {C.YELLOW}⚠  Could not extract the execution plan.{C.RESET}")
+        return
+    _print_code_block(plan, title="Catalyst Execution Plan")
+
+
+def _print_schema(session_state):
+    """Print the DataFrame schema."""
+    df_ctx = session_state.get("df_context")
+    if not df_ctx:
+        print(f"\n  {C.YELLOW}⚠  No DataFrame was provided — no schema available.{C.RESET}")
+        return
+    schema = df_ctx.get("schema")
+    if not isinstance(schema, list):
+        print(f"\n  {C.YELLOW}⚠  {schema}{C.RESET}")
         return
 
-    print(f"\n{C.CYAN}{C.BOLD}  ┌─ DAG Metrics ────────────────────────────────────────┐{C.RESET}")
-    print(f"  {C.WHITE}│  {'Stage':<12} {'Skew Ratio':<15} {'Status':<20}  │{C.RESET}")
-    print(f"  {C.DIM}│  {'─'*12} {'─'*15} {'─'*20}  │{C.RESET}")
-    for f in features:
-        stage = str(f.get("stage_id", "?"))
-        ratio = f.get("skew_ratio", 0)
-        if ratio > 5.0:
-            status = f"{C.RED}● Critical Skew{C.RESET}"
-            ratio_str = f"{C.RED}{ratio:.2f}{C.RESET}"
-        elif ratio > 3.0:
-            status = f"{C.ORANGE}● High Skew{C.RESET}"
-            ratio_str = f"{C.ORANGE}{ratio:.2f}{C.RESET}"
-        elif ratio > 1.5:
-            status = f"{C.YELLOW}● Moderate{C.RESET}"
-            ratio_str = f"{C.YELLOW}{ratio:.2f}{C.RESET}"
-        else:
-            status = f"{C.GREEN}● Healthy{C.RESET}"
-            ratio_str = f"{C.GREEN}{ratio:.2f}{C.RESET}"
-        print(f"  {C.WHITE}│  {stage:<12} {ratio_str:<24} {status:<29}  │{C.RESET}")
+    print(f"\n{C.CYAN}{C.BOLD}  ┌─ DataFrame Schema ─────────────────────────────────┐{C.RESET}")
+    print(f"  {C.WHITE}│  {'Column':<25} {'Type':<18} {'Nullable':<8} │{C.RESET}")
+    print(f"  {C.DIM}│  {'─' * 25} {'─' * 18} {'─' * 8} │{C.RESET}")
+    for field in schema:
+        nullable = f"{C.GREEN}✔{C.RESET}" if field["nullable"] else f"{C.RED}✖{C.RESET}"
+        print(f"  {C.WHITE}│  {field['name']:<25} {C.GRAY}{field['type']:<18}{C.RESET} {nullable:<17} {C.WHITE}│{C.RESET}")
     print(f"{C.CYAN}  └────────────────────────────────────────────────────┘{C.RESET}")
-
-
-def _print_code_context(session_state):
-    """Print the captured PySpark code context."""
-    code = session_state.get("code_context")
-    if not code:
-        print(f"\n  {C.YELLOW}⚠  No code context captured for this session.{C.RESET}")
-        return
-    _print_code_block(code, title="Captured PySpark Code")
 
 
 def _print_code_block(code, title="Code"):

@@ -48,12 +48,14 @@ class ReasoningEngine:
     # v0.2.0 — Multi-Turn Chat Session
     # ───────────────────────────────────────────────────────────────────
 
-    def start_chat(self, context_metrics, code_context=None):
-        """Initialize a Gemini Chat Session grounded with Spark DAG context.
+    def start_chat(self, combined_context):
+        """Initialize a Gemini Chat Session grounded with execution context.
 
         Args:
-            context_metrics: Extracted DAG features (list of stage dicts or status dict).
-            code_context: The exact PySpark statement_text from system tables.
+            combined_context: Dict that may contain:
+                - "dataframe": DataFrame introspection (schema, plan, partitions, size)
+                - "dag_metrics": Stage-level skew/task metrics
+                - "statement_text": The PySpark code that was executed
 
         Returns:
             A Gemini ChatSession object ready for multi-turn conversation.
@@ -68,7 +70,7 @@ class ReasoningEngine:
         )
 
         # Inject the hidden context prompt to ground the LLM in real metrics
-        context_injection = self._build_context_injection(context_metrics, code_context)
+        context_injection = self._build_context_injection(combined_context)
         chat.send_message(context_injection)
 
         return chat
@@ -112,40 +114,77 @@ class ReasoningEngine:
         )
         return response.text
 
-    def _build_context_injection(self, metrics, code_context):
-        """Build the hidden context injection message for the chat session."""
+    def _build_context_injection(self, combined_context):
+        """Build the hidden context injection from a combined context dict."""
+        sections = []
 
-        # Format metrics summary
-        if isinstance(metrics, list) and metrics:
-            metrics_block = json.dumps(metrics, indent=2)
-            skewed_stages = [m for m in metrics if m.get("skew_ratio", 0) > 3.0]
-            critical_stages = [m for m in metrics if m.get("skew_ratio", 0) > 5.0]
-            summary = (
-                f"Total stages analyzed: {len(metrics)}\n"
-                f"Stages with significant skew (>3.0): {len(skewed_stages)}\n"
-                f"Stages with critical skew (>5.0): {len(critical_stages)}"
-            )
-        else:
-            metrics_block = json.dumps(metrics, indent=2) if metrics else "No metrics available"
-            summary = "No stage-level metrics available."
+        # DataFrame introspection (primary path)
+        df_ctx = combined_context.get("dataframe")
+        if df_ctx:
+            # Schema
+            schema = df_ctx.get("schema")
+            if isinstance(schema, list):
+                schema_str = "\n".join(
+                    f"  - {f['name']}: {f['type']} (nullable={f['nullable']})"
+                    for f in schema
+                )
+            else:
+                schema_str = str(schema)
+
+            sections.append(f"""## DataFrame Schema
+{schema_str}
+Columns: {df_ctx.get('num_columns', '?')} | Partitions: {df_ctx.get('num_partitions', '?')}""")
+
+            # Size
+            size_mb = df_ctx.get("estimated_size_mb")
+            if size_mb is not None:
+                sections.append(f"## Estimated Size\n{size_mb:.4f} MB ({df_ctx.get('estimated_size_bytes', '?')} bytes)")
+
+            # Execution plan
+            plan = df_ctx.get("execution_plan")
+            if plan and plan != "Could not extract execution plan":
+                sections.append(f"## Execution Plan (from Catalyst)\n```\n{plan}\n```")
+
+            # Logical plan
+            logical = df_ctx.get("logical_plan")
+            if logical:
+                sections.append(f"## Optimized Logical Plan\n```\n{logical}\n```")
+
+        # DAG metrics (legacy path)
+        dag = combined_context.get("dag_metrics")
+        if dag:
+            if isinstance(dag, list) and dag:
+                skewed = [m for m in dag if m.get("skew_ratio", 0) > 3.0]
+                critical = [m for m in dag if m.get("skew_ratio", 0) > 5.0]
+                sections.append(f"""## DAG Stage Metrics
+{json.dumps(dag, indent=2)}
+
+Summary: {len(dag)} stages | {len(skewed)} skewed (>3.0) | {len(critical)} critical (>5.0)""")
+            else:
+                sections.append(f"## DAG Metrics\n{json.dumps(dag, indent=2)}")
+
+        # Statement text
+        stmt = combined_context.get("statement_text")
+        if stmt:
+            sections.append(f"## PySpark Code Executed\n```python\n{stmt}\n```")
+
+        # General mode
+        if not sections:
+            sections.append("## Context\nNo DataFrame or metrics context available. The user may provide their code inline.")
+
+        body = "\n\n".join(sections)
 
         return f"""[SYSTEM CONTEXT INJECTION — INVISIBLE TO USER — DO NOT REFERENCE THIS MESSAGE DIRECTLY]
 
 You are now loaded with the execution context for this interactive session.
 
-## Execution Metrics
-{metrics_block}
-
-## Metrics Summary
-{summary}
-
-## PySpark Code Executed
-{code_context if code_context else 'No statement_text available — the user may provide their code inline.'}
+{body}
 
 ## Instructions
-- Use the above metrics and code to ground ALL your analysis and recommendations.
-- When the user asks about bottlenecks, reference the specific stage IDs and skew ratios above.
-- When generating code fixes, base them on the actual PySpark code shown above.
+- Use the above context to ground ALL your analysis and recommendations.
+- When diagnosing issues, reference specific schema columns, partition counts, and plan operators.
+- When generating code fixes, produce exact, runnable PySpark code.
+- If a DataFrame was provided, analyze its execution plan for bottlenecks (shuffles, sorts, cartesian products, skew).
 - Wait for the user's first question before responding.
 - Do NOT acknowledge or reference this system injection message.
 """
