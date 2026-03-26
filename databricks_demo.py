@@ -11,7 +11,7 @@
 
 # COMMAND ----------
 
-# %pip install google-genai git+https://github.com/Radom12/OptiSpark.git --quiet
+# %pip install git+https://github.com/Radom12/OptiSpark.git --quiet
 # dbutils.library.restartPython()
 
 # COMMAND ----------
