@@ -42,38 +42,41 @@ class ReasoningEngine:
 
     def __init__(self, api_key):
         self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-2.0-flash"
+        self.models = [
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite-preview",
+            "gemma-3-27b"
+        ]
 
     # ───────────────────────────────────────────────────────────────────
     # v0.2.0 — Multi-Turn Chat Session
     # ───────────────────────────────────────────────────────────────────
 
     def start_chat(self, combined_context):
-        """Initialize a Gemini Chat Session grounded with execution context.
-
-        Args:
-            combined_context: Dict that may contain:
-                - "dataframe": DataFrame introspection (schema, plan, partitions, size)
-                - "dag_metrics": Stage-level skew/task metrics
-                - "statement_text": The PySpark code that was executed
-
-        Returns:
-            A Gemini ChatSession object ready for multi-turn conversation.
-        """
-        chat = self.client.chats.create(
-            model=self.model_id,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.2,
-                max_output_tokens=4096,
-            ),
-        )
-
-        # Inject the hidden context prompt to ground the LLM in real metrics
+        """Initialize a Gemini Chat Session grounded with execution context."""
         context_injection = self._build_context_injection(combined_context)
-        chat.send_message(context_injection)
-
-        return chat
+        
+        last_exception = None
+        for model_id in self.models:
+            try:
+                chat = self.client.chats.create(
+                    model=model_id,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0.2,
+                        max_output_tokens=4096,
+                    ),
+                )
+                # Inject the hidden context prompt to ground the LLM in real metrics
+                chat.send_message(context_injection)
+                self.model_id = model_id  # Save successful model for future reference if needed
+                return chat
+            except Exception as e:
+                # Catch quota exceeded, model not found, etc.
+                last_exception = e
+                print(f"Warning: Failed to start chat with {model_id} ({e}). Trying fallback...")
+                
+        raise RuntimeError(f"All fallback models failed. Last error: {last_exception}")
 
     # ───────────────────────────────────────────────────────────────────
     # v0.1.0 — Single-Turn Generation (backwards compatible)
@@ -102,17 +105,26 @@ class ReasoningEngine:
     # ───────────────────────────────────────────────────────────────────
 
     def _generate(self, prompt):
-        """Single-turn generation call."""
-        response = self.client.models.generate_content(
-            model=self.model_id,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.2,
-                max_output_tokens=4096,
-            ),
-        )
-        return response.text
+        """Single-turn generation call with fallback logic."""
+        last_exception = None
+        for model_id in self.models:
+            try:
+                response = self.client.models.generate_content(
+                    model=model_id,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0.2,
+                        max_output_tokens=4096,
+                    ),
+                )
+                self.model_id = model_id
+                return response.text
+            except Exception as e:
+                last_exception = e
+                print(f"Warning: Failed to generate content with {model_id} ({e}). Trying fallback...")
+                
+        raise RuntimeError(f"All fallback models failed. Last error: {last_exception}")
 
     def _build_context_injection(self, combined_context):
         """Build the hidden context injection from a combined context dict."""
