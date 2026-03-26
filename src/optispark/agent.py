@@ -228,12 +228,55 @@ class OptiSpark:
                 response = chat_session.send_message(user_input)
                 _print_response(response.text, session_state["message_count"])
 
+                # Auto-Execute Sandbox (v0.3.0)
+                import re
+                if df is not None:
+                    # Look for python blocks that assign df_opt
+                    blocks = re.findall(r"```python\n(.*?)```", response.text, re.DOTALL)
+                    for block in blocks:
+                        if "df_opt" in block:
+                            print(f"\n  {C.YELLOW}{C.BOLD}⚡ OptiSpark generated an executable fix.{C.RESET}")
+                            confirm = input(f"  {C.BLUE}❯ Apply this code to your DataFrame? [y/N]: {C.RESET}").strip().lower()
+                            if confirm == 'y':
+                                print(f"  {C.BLUE}◆{C.RESET} Executing securely in background...", end="")
+                                try:
+                                    import pyspark.sql.functions as F
+                                    from pyspark.sql import Window
+                                    
+                                    # Provide secure local environment with standard PySpark aliases
+                                    local_env = {"df": df, "spark": df.sparkSession, "F": F, "Window": Window}
+                                    exec(block.strip(), {}, local_env)
+                                    
+                                    if "df_opt" in local_env:
+                                        session_state["df_opt"] = local_env["df_opt"]
+                                        df = session_state["df_opt"]  # Update REPL reference
+                                        print(f" {C.GREEN}✔ Success!{C.RESET}")
+                                        print(f"  {C.GRAY}├─ The optimized DataFrame is now active in this chat session.{C.RESET}")
+                                        print(f"  {C.GRAY}└─ It will be returned when you type 'exit'.{C.RESET}")
+                                    else:
+                                        print(f" {C.RED}✖ Error: The code executed but did not assign 'df_opt'.{C.RESET}")
+                                except Exception as ex:
+                                    print(f" {C.RED}✖ Execution Failed{C.RESET}")
+                                    print(f"  {C.RED}Error: {str(ex)}{C.RESET}")
+                                    print(f"\n  {C.GRAY}Feeding the stack trace back to the agent...{C.RESET}")
+                                    
+                                    # Self-Healing loop
+                                    error_prompt = f"The code you provided failed to execute with this error:\n```\n{str(ex)}\n```\nPlease fix the code and output a new python block assigning the result to `df_opt`."
+                                    session_state["message_count"] += 1
+                                    _print_thinking()
+                                    correction = chat_session.send_message(error_prompt)
+                                    _print_response(correction.text, session_state["message_count"])
+                            break  # Only ask for the first valid block
+
             except KeyboardInterrupt:
                 print()
                 _print_goodbye(session_state)
                 break
             except Exception as e:
                 _print_error(str(e))
+
+        # Return the optimized DataFrame, or fallback to the original
+        return session_state.get("df_opt", df)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Private Helpers
@@ -293,6 +336,18 @@ class OptiSpark:
             context["logical_plan"] = df._jdf.queryExecution().optimizedPlan().toString()
         except Exception:
             context["logical_plan"] = None
+
+        # Spark cluster configuration and capacity
+        try:
+            spark = df.sparkSession
+            context["spark_conf"] = {
+                "spark.sql.shuffle.partitions": spark.conf.get("spark.sql.shuffle.partitions", "default"),
+                "spark.driver.memory": spark.conf.get("spark.driver.memory", "default"),
+                "spark.executor.memory": spark.conf.get("spark.executor.memory", "default"),
+                "spark.executor.cores": spark.conf.get("spark.executor.cores", "default"),
+            }
+        except Exception:
+            context["spark_conf"] = None
 
         return context
 
