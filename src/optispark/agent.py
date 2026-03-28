@@ -215,6 +215,19 @@ class OptiSpark:
                 elif cmd in ("/schema", "/s"):
                     _print_schema(session_state)
                     continue
+                elif cmd in ("/benchmark", "/b"):
+                    if "last_code" not in session_state:
+                        print(f"  {C.YELLOW}⚠  No AI code generated yet. Ask OptiSpark for a fix first!{C.RESET}")
+                        continue
+                    if df is None:
+                        print(f"  {C.YELLOW}⚠  No original DataFrame found for benchmarking.{C.RESET}")
+                        continue
+                        
+                    from optispark.benchmark import run_benchmark
+                    print(f"\n  {C.BLUE}{C.BOLD}🚀 Launching Benchmark Engine{C.RESET}")
+                    results = run_benchmark(df, session_state["last_code"])
+                    _print_benchmark_results(results)
+                    continue
                 elif cmd in ("/clear",):
                     _clear_screen()
                     _print_banner()
@@ -228,11 +241,15 @@ class OptiSpark:
                 response = chat_session.send_message(user_input)
                 _print_response(response.text, session_state["message_count"])
 
-                # Auto-Execute Sandbox (v0.3.0)
+                # Extract python blocks globally for benchmarking
                 import re
+                blocks = re.findall(r"```python\n(.*?)```", response.text, re.DOTALL)
+                if blocks:
+                    # Save the last generated block for /benchmark runs
+                    session_state["last_code"] = blocks[-1]
+
+                # Auto-Execute Sandbox (v0.3.0)
                 if df is not None:
-                    # Look for python blocks that assign df_opt
-                    blocks = re.findall(r"```python\n(.*?)```", response.text, re.DOTALL)
                     for block in blocks:
                         if "df_opt" in block:
                             print(f"\n  {C.YELLOW}{C.BOLD}⚡ OptiSpark generated an executable fix.{C.RESET}")
@@ -613,3 +630,28 @@ def _print_goodbye(session_state):
 def _clear_screen():
     """Clear the terminal screen."""
     os.system("cls" if os.name == "nt" else "clear")
+
+def _print_benchmark_results(results):
+    """Render a premium ANSI table for the benchmark results."""
+    from optispark.agent import _Colors as C
+    
+    if results.get("status") == "error":
+        print(f"\n  {C.RED}{C.BOLD}┌─ Benchmark Failed ──────────────────────────────────────────────┐{C.RESET}")
+        print(f"  {C.RED}│{C.RESET}  {results.get('message', 'Unknown Error')}")
+        print(f"  {C.RED}└{'─' * 65}┘{C.RESET}")
+        return
+        
+    orig_time = results["original_time_sec"]
+    fixed_time = results["fixed_time_sec"]
+    pct = results["improvement_pct"]
+    
+    # Determine color rendering
+    pct_color = C.GREEN if pct > 0 else C.RED
+    trend = "🚀 Faster!" if pct > 0 else "🐢 Slower"
+    
+    print(f"\n  {C.CYAN}{C.BOLD}┌─ 📊 Dry-Run Benchmark Results (1% Sample) ────────────────────────┐{C.RESET}")
+    print(f"  {C.CYAN}│{C.RESET}  Original Plan Execution Time : {C.WHITE}{orig_time:>6.2f}s{C.RESET}")
+    print(f"  {C.CYAN}│{C.RESET}  AI-Fixed Plan Execution Time : {C.WHITE}{fixed_time:>6.2f}s{C.RESET}")
+    print(f"  {C.CYAN}├───────────────────────────────────────────────────────────────────┤{C.RESET}")
+    print(f"  {C.CYAN}│{C.RESET}  Net Improvement               : {pct_color}{C.BOLD}{pct:>6.2f}%{C.RESET} {trend}")
+    print(f"  {C.CYAN}└{'─' * 67}┘{C.RESET}")
