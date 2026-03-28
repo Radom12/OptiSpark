@@ -649,7 +649,7 @@ def _print_benchmark_results(results):
     pct_color = C.GREEN if pct > 0 else C.RED
     trend = "🚀 Faster!" if pct > 0 else "🐢 Slower"
     
-    print(f"\n  {C.CYAN}{C.BOLD}┌─ 📊 Dry-Run Benchmark Results (1% Sample) ────────────────────────┐{C.RESET}")
+    print(f"\n  {C.CYAN}{C.BOLD}┌─ 📊 Dry-Run Benchmark Results (0.1% Sample) ──────────────────────┐{C.RESET}")
     print(f"  {C.CYAN}│{C.RESET}  Original Plan Execution Time : {C.WHITE}{orig_time:>6.2f}s{C.RESET}")
     print(f"  {C.CYAN}│{C.RESET}  AI-Fixed Plan Execution Time : {C.WHITE}{fixed_time:>6.2f}s{C.RESET}")
     print(f"  {C.CYAN}├───────────────────────────────────────────────────────────────────┤{C.RESET}")
