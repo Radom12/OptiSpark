@@ -2,7 +2,7 @@ import pytest
 from optispark.benchmark import run_benchmark
 
 def test_benchmark_success(spark):
-    df = spark.range(100)
+    df = spark.range(10000)
     # Simple valid optimization
     code = "df_opt = df.withColumn('sample_col', F.lit(1)).filter(F.col('id') < 50)"
     res = run_benchmark(df, code)
@@ -20,7 +20,7 @@ def test_benchmark_empty_df(spark):
     assert "Sampled DataFrame is empty" in res["message"]
     
 def test_benchmark_execution_error(spark):
-    df = spark.range(10)
+    df = spark.range(10000)
     # Syntax error code
     code = "df_opt = df.withColumn('a', nonexistent_func())"
     res = run_benchmark(df, code)
@@ -28,7 +28,7 @@ def test_benchmark_execution_error(spark):
     assert "AI Code Execution Failed" in res["message"]
 
 def test_benchmark_no_df_opt(spark):
-    df = spark.range(10)
+    df = spark.range(10000)
     code = "some_other_df = df.withColumn('x', F.lit(1))"
     res = run_benchmark(df, code)
     assert res["status"] == "error"

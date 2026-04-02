@@ -83,7 +83,7 @@ def test_chat_commands(mock_clear, mock_input, mock_engine, spark):
 
 @patch("optispark.agent.ReasoningEngine")
 @patch("builtins.input", side_effect=["fix", "y", "/b", "exit"])
-@patch("optispark.agent.run_benchmark")
+@patch("optispark.benchmark.run_benchmark")
 def test_chat_benchmark(mock_benchmark, mock_input, mock_engine, spark):
     # Test /benchmark integration
     chat_session = MagicMock()
@@ -102,5 +102,40 @@ def test_chat_benchmark(mock_benchmark, mock_input, mock_engine, spark):
 def test_chat_keyboard_interrupt(mock_input, mock_engine):
     mock_input.side_effect = KeyboardInterrupt()
     agent = OptiSpark(api_key="fake")
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["exit"])
+def test_agent_introspect_error_handling(mock_input, mock_engine, spark):
+    class BadDF:
+        @property
+        def schema(self):
+            raise Exception("Schema failed")
+        @property
+        def _jdf(self):
+            raise Exception("Catalyst failed")
+        @property
+        def rdd(self):
+            class BadRDD:
+                def getNumPartitions(self):
+                    raise Exception("Partition failed")
+            return BadRDD()
+        def explain(self, mode="extended"):
+            raise Exception("Explain failed")
+    
+    agent = OptiSpark(api_key="fake")
+    bdf = BadDF()
+    res = agent.chat(df=bdf)
+    assert res == bdf
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("optispark.agent.extract_features_from_system_tables")
+@patch("optispark.agent.OptiSpark._fetch_statement_text")
+@patch("builtins.input", side_effect=["exit"])
+def test_agent_chat_legacy_path(mock_input, mock_fetch, mock_sys, mock_engine, spark):
+    mock_sys.return_value = [{"stage_id": 1, "skew_ratio": 4.0}]
+    mock_fetch.return_value = "code"
+    agent = OptiSpark(api_key="fake")
+    agent.chat(spark=spark, query_id="123")
+    mock_sys.assert_called_once()
     agent.chat() # No df, general mode
     # Should exit cleanly

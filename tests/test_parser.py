@@ -74,3 +74,32 @@ def test_extract_features_from_system_tables_fail(spark):
 
 def test_extract_features_from_logs_empty():
     assert extract_features_from_logs("/invalid/path") is None
+
+import json
+def test_extract_features_from_logs_success(tmp_path):
+    # simulate log dir
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    app_dir = log_dir / "app-123"
+    app_dir.mkdir()
+    event_file = app_dir / "events_1"
+    
+    event = {
+        "Event": "SparkListenerTaskEnd",
+        "Task End Reason": {"Reason": "Success"},
+        "Stage ID": 1,
+        "Task Metrics": {
+            "Executor Run Time": 100,
+            "Memory Bytes Spilled": 0,
+            "Disk Bytes Spilled": 0,
+            "Input Metrics": {"Records Read": 10},
+            "Output Metrics": {"Records Written": 10},
+            "Shuffle Write Metrics": {"Shuffle Records Written": 0}
+        }
+    }
+    # write two events so it calculates median instead of skipping
+    event_file.write_text(json.dumps(event) + "\n" + json.dumps(event))
+    
+    features = extract_features_from_logs(str(log_dir))
+    assert len(features) == 1
+    assert features[0]["stage_id"] == 1
