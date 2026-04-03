@@ -1,3 +1,34 @@
+import ast
+import re
+
+class ReadOnlyValidator(ast.NodeVisitor):
+    def __init__(self):
+        self.destructive_methods = {'write', 'save', 'saveAsTable', 'insertInto', 'drop', 'delete', 'truncate'}
+        self.destructive_sql = re.compile(r'\b(DROP|DELETE|TRUNCATE|INSERT|UPDATE|CREATE)\b', re.IGNORECASE)
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Attribute):
+            if node.func.attr in self.destructive_methods:
+                raise ValueError(f"Unsafe operation detected: blocked destructive method '{node.func.attr}'.")
+            
+            if node.func.attr == 'sql':
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    if self.destructive_sql.search(node.args[0].value):
+                        raise ValueError(f"Unsafe operation detected: blocked destructive SQL command.")
+        
+        self.generic_visit(node)
+
+
+def secure_exec(generated_code, global_vars, local_vars):
+    """Parses code for AST safety, then executes via exec()."""
+    # 1. AST Safety Check
+    tree = ast.parse(generated_code)
+    ReadOnlyValidator().visit(tree)
+    
+    # 2. Execution
+    exec(generated_code, global_vars, local_vars)
+
+
 def validate_safety(code, target_df, max_safe_size_mb=50):
     """Validates AI-generated code against cluster safety constraints."""
     print("🛡️ [3/4] Running safety checks...")

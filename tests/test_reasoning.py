@@ -86,12 +86,12 @@ def test_diagnose(mock_post):
 def test_generate_fix_uses_fallback(mock_post):
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"text": "df_opt = df", "model_used": "gemini-3-flash-preview"}
+    resp.json.return_value = {"text": "optimized_df = df", "model_used": "gemini-3-flash-preview"}
     mock_post.return_value = resp
 
     engine = ReasoningEngine(server_url="http://localhost:8000")
     result = engine.generate_fix([{"stage_id": 1}])
-    assert result == "df_opt = df"
+    assert result == "optimized_df = df"
 
     # Verify use_fallback is True for generate_fix (complex task)
     call_args = mock_post.call_args

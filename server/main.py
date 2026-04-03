@@ -43,9 +43,9 @@ SYSTEM_PROMPT = """
 You are **OptiSpark**, an elite PySpark autonomous execution agent.
 
 ## Your Identity
-- You are an interactive AI agent embedded in a Databricks notebook environment.
+- You are an interactive AI agent embedded in the user's PySpark environment (Databricks, EMR, Dataproc, or local Spark).
 - You diagnose Apache Spark bottlenecks and generate **executable** PySpark code fixes.
-- You have direct access to the user's actual Spark DAG execution metrics, cluster hardware config, and DataFrame schema.
+- You have direct access to the user's actual Spark execution plan, cluster config, and DataFrame schema.
 
 ## Your Capabilities
 1. **Bottleneck Detection**: Identify data skew, shuffle spill, small file problems, and broadcast join opportunities.
@@ -54,12 +54,14 @@ You are **OptiSpark**, an elite PySpark autonomous execution agent.
 4. **Safety Awareness**: Prevent OOM operations and out-of-core Cartesian joins.
 
 ## Behavioral Rules
-- **Be precise**: Reference specific stage IDs, skew ratios, and memory constraints.
-- **Show the code**: You MUST include ONE highly optimized, runnable PySpark code block.
-- **Assignment Rule (CRITICAL)**: The final optimized DataFrame in your code block MUST be assigned to the variable `df_opt`. If you don't use `df_opt = ...`, the auto-fix engine will fail.
-- **Assume Context**: The user's input DataFrame is available in your block as the variable `df`. The `spark` session and PySpark `F` (functions) are also available.
-- **Explain**: Briefly explain the 'why' before the code block.
-- **Be concise**: Avoid filler. Lead with the diagnosis.
+- **Analyze the Full Pipeline**: The `df` you receive might be the final output of a complex pipeline. Use its execution plan to find the ROOT CAUSE (e.g. an upstream skewed join), not just the final aggregation.
+- **Reconstruct from Root**: If the bottleneck is upstream, DO NOT just re-process the already-aggregated `df`. Instead, completely reconstruct the fixed pipeline from its sources. The `spark` session object is available.
+- **Preserve Output**: `optimized_df` MUST output the exact same schema and semantics as the original `df`.
+- **Assignment Rule (CRITICAL)**: Your generated code must end by assigning the final, corrected DataFrame to a variable named `optimized_df`. Do not call `.collect()` or `.show()`.
+- **Data Safety Rule (CRITICAL)**: You are strictly forbidden from generating any code that alters data states. Do not use `.write`, `.insertInto()`, `.saveAsTable()`, or any SQL DML/DDL.
+- **Ambiguity Resolution**: If the input contains an AnalysisException regarding 'ambiguous' columns, you must rewrite the join logic using `.alias()` on the DataFrames and explicitly reference the aliases in the join condition to resolve the ambiguity.
+- **Assume Context**: `df` (input), `spark` (SparkSession), and PySpark `F` are available. 
+- **Explain**: Briefly explain the 'why' before the code block. Lead with the diagnosis.
 - **Never fabricate metrics**: Only reference data from the injected context.
 """
 
@@ -67,12 +69,19 @@ You are **OptiSpark**, an elite PySpark autonomous execution agent.
 # In-Memory Session Store
 # ═══════════════════════════════════════════════════════════════════════════
 
-chat_sessions = {}  # {session_id: {"chat": chat_obj, "model": model_id, "created_at": timestamp}}
+chat_sessions = {}  # {session_id: {"chat": chat_obj, "model": model_id, "last_activity": timestamp}}
+
+def _get_session_timestamp(session: dict) -> float:
+    """Return the most recent activity timestamp for a session, falling back to created_at.
+
+    Returns 0 if neither key is present, so the session is treated as expired.
+    """
+    return session.get("last_activity", session.get("created_at", 0))
 
 def _cleanup_expired_sessions():
     """Remove sessions older than TTL."""
     now = time.time()
-    expired = [sid for sid, s in chat_sessions.items() if now - s["created_at"] > SESSION_TTL_SECONDS]
+    expired = [sid for sid, s in chat_sessions.items() if now - _get_session_timestamp(s) > SESSION_TTL_SECONDS]
     for sid in expired:
         del chat_sessions[sid]
 
@@ -184,6 +193,10 @@ Columns: {df_ctx.get('num_columns', '?')} | Partitions: {df_ctx.get('num_partiti
         if logical:
             sections.append(f"## Optimized Logical Plan\n```\n{logical}\n```")
 
+        parsed = df_ctx.get("parsed_logical_plan")
+        if parsed:
+            sections.append(f"## Parsed (Original) Logical Plan\n```\n{parsed}\n```")
+
         conf = df_ctx.get("spark_conf")
         if conf:
             sections.append(f"## Spark Configuration\n"
@@ -263,7 +276,7 @@ def start_chat(req: ChatStartRequest):
             chat_sessions[session_id] = {
                 "chat": chat,
                 "model": model_id,
-                "created_at": time.time(),
+                "last_activity": time.time(),
             }
             return ChatStartResponse(session_id=session_id, model_used=model_id)
         except Exception as e:
@@ -277,14 +290,14 @@ def start_chat(req: ChatStartRequest):
 def send_message(req: ChatMessageRequest):
     """Send a message to an existing chat session."""
     session = chat_sessions.get(req.session_id)
-    if not session or time.time() - session["created_at"] > SESSION_TTL_SECONDS:
+    if not session or time.time() - _get_session_timestamp(session) > SESSION_TTL_SECONDS:
         if req.session_id in chat_sessions:
             del chat_sessions[req.session_id]
         raise HTTPException(status_code=404, detail="Session not found or expired.")
 
     try:
         response = session["chat"].send_message(req.message)
-        session["created_at"] = time.time()  # Refresh TTL
+        session["last_activity"] = time.time()  # Refresh TTL
         return ChatMessageResponse(text=response.text, session_id=req.session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Model error: {str(e)}")

@@ -26,7 +26,7 @@ def test_optimize_success(mock_sys, mock_logs, mock_engine):
     mock_sys.return_value = [{"stage_id": 1}]
     engine_instance = MagicMock()
     engine_instance.diagnose.return_value = "Bad Join"
-    engine_instance.generate_fix.return_value = "df_opt = df"
+    engine_instance.generate_fix.return_value = "optimized_df = df"
     mock_engine.return_value = engine_instance
 
     agent = OptiSpark(log_dir="/dev/null")
@@ -84,7 +84,11 @@ def test_chat_interaction_and_execution(mock_input, mock_engine):
 
     chat_session = MagicMock()
     resp = MagicMock()
-    resp.text = """Some analysis.\n```python\ndf_opt = df.withColumn('opt', F.lit(1))\n```\n"""
+    resp.text = """Some analysis.
+```python
+optimized_df = df.withColumn('opt', F.lit(1))
+```
+"""
     chat_session.send_message.return_value = resp
     mock_engine.return_value.start_chat.return_value = chat_session
 
@@ -107,7 +111,7 @@ def test_chat_commands(mock_clear, mock_input, mock_engine):
 def test_chat_benchmark(mock_benchmark, mock_input, mock_engine):
     chat_session = MagicMock()
     resp = MagicMock()
-    resp.text = "```python\ndf_opt = df\n```"
+    resp.text = "```python\noptimized_df = df\n```"
     chat_session.send_message.return_value = resp
     mock_engine.return_value.start_chat.return_value = chat_session
     mock_benchmark.return_value = {"status": "success", "original_time_sec": 1, "fixed_time_sec": 0.5, "improvement_pct": 50}
@@ -180,9 +184,9 @@ def test_agent_chat_session_init_failure(mock_input, mock_engine):
 def test_chat_exec_failure_self_heal(mock_input, mock_engine):
     chat_session = MagicMock()
     resp = MagicMock()
-    resp.text = "```python\ndf_opt = undefined_var\n```"
+    resp.text = "```python\noptimized_df = undefined_var\n```"
     correction = MagicMock()
-    correction.text = "```python\ndf_opt = df.withColumn('fixed', F.lit(1))\n```"
+    correction.text = "```python\noptimized_df = df.withColumn('fixed', F.lit(1))\n```"
     chat_session.send_message.side_effect = [resp, correction]
     mock_engine.return_value.start_chat.return_value = chat_session
 

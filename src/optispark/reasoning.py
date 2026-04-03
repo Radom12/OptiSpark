@@ -36,20 +36,35 @@ class _RemoteChatSession:
 
     def send_message(self, message: str):
         """Send a message and return an object with a .text attribute."""
-        resp = requests.post(
-            f"{self.server_url}/api/v1/chat/message",
-            json={"session_id": self.session_id, "message": message},
-            timeout=120,
-        )
+        import time as _time
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    f"{self.server_url}/api/v1/chat/message",
+                    json={"session_id": self.session_id, "message": message},
+                    timeout=120,
+                )
+                break
+            except requests.exceptions.RequestException:
+                if attempt < max_retries - 1:
+                    wait = 5 * (attempt + 1)
+                    _time.sleep(wait)
+                else:
+                    raise RuntimeError("Lost connection to OptiSpark backend.")
+
         if resp.status_code != 200:
             detail = _safe_detail(resp)
             raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
+
+        data = resp.json()
 
         class _Response:
             def __init__(self, text):
                 self.text = text
 
-        return _Response(resp.json()["text"])
+        return _Response(data["text"])
 
 
 class ReasoningEngine:

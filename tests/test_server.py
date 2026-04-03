@@ -102,7 +102,7 @@ def test_send_message_model_error(mock_genai_client):
 @patch("server.main.client")
 def test_generate_success(mock_genai_client):
     mock_response = MagicMock()
-    mock_response.text = "df_opt = df.repartition(200)"
+    mock_response.text = "optimized_df = df.repartition(200)"
     mock_genai_client.models.generate_content.return_value = mock_response
 
     resp = client.post("/api/v1/generate", json={
@@ -111,7 +111,7 @@ def test_generate_success(mock_genai_client):
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["text"] == "df_opt = df.repartition(200)"
+    assert data["text"] == "optimized_df = df.repartition(200)"
     assert data["model_used"] == "gemma-4-31b-it"
 
 
@@ -182,7 +182,7 @@ def test_cleanup_expired_sessions():
     chat_sessions["old-session"] = {
         "chat": MagicMock(),
         "model": "test",
-        "created_at": time.time() - 7200  # 2 hours ago
+        "last_activity": time.time() - 7200  # 2 hours ago
     }
     _cleanup_expired_sessions()
     assert "old-session" not in chat_sessions
