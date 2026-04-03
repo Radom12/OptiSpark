@@ -65,17 +65,27 @@ class ReasoningEngine:
 
     def start_chat(self, combined_context):
         """Start a chat session on the backend, returns a RemoteChatSession."""
-        try:
-            resp = requests.post(
-                f"{self.server_url}/api/v1/chat/start",
-                json={"combined_context": combined_context},
-                timeout=60,
-            )
-        except requests.exceptions.RequestException:
-            raise RuntimeError(
-                f"Could not connect to OptiSpark backend at {self.server_url}. "
-                f"Is the server running?"
-            )
+        import time as _time
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    f"{self.server_url}/api/v1/chat/start",
+                    json={"combined_context": combined_context},
+                    timeout=180,
+                )
+                break
+            except requests.exceptions.RequestException:
+                if attempt < max_retries - 1:
+                    wait = 10 * (attempt + 1)
+                    print(f"\n  ⚠ Server waking up... retrying in {wait}s ({attempt + 1}/{max_retries})")
+                    _time.sleep(wait)
+                else:
+                    raise RuntimeError(
+                        f"Could not connect to OptiSpark backend at {self.server_url}. "
+                        f"Is the server running?"
+                    )
 
         if resp.status_code != 200:
             detail = _safe_detail(resp)
