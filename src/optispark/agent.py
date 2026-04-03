@@ -313,18 +313,20 @@ class OptiSpark:
             context["schema"] = "Could not extract schema"
             context["num_columns"] = "?"
 
-        # Execution plan (the explain output)
+        # Execution plan (the explain output) — truncate to avoid massive payloads
+        MAX_PLAN_LEN = 4000
         try:
-            context["execution_plan"] = df._jdf.queryExecution().toString()
+            plan = df._jdf.queryExecution().toString()
+            context["execution_plan"] = plan[:MAX_PLAN_LEN] if len(plan) > MAX_PLAN_LEN else plan
         except Exception:
             try:
-                # Fallback: capture explain as a string
                 import io
                 from contextlib import redirect_stdout
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     df.explain(mode="extended")
-                context["execution_plan"] = buf.getvalue()
+                plan = buf.getvalue()
+                context["execution_plan"] = plan[:MAX_PLAN_LEN] if len(plan) > MAX_PLAN_LEN else plan
             except Exception:
                 context["execution_plan"] = "Could not extract execution plan"
 
