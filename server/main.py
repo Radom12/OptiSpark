@@ -1,7 +1,7 @@
 """
 OptiSpark Backend API Server
 Secure proxy between client packages and Google AI models.
-Gemma 3 27B is the primary model; Gemini models are used only for complex fallback.
+Gemma 4 31B is the primary model; Gemini models are used only for complex fallback.
 """
 
 import os
@@ -29,7 +29,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY environment variable is required on the server.")
 
-# Model priority: Gemma 3 27B first (free, fast), Gemini only for fallback
+# Model priority: Gemma 4 31B first (free, fast), Gemini only for fallback
 PRIMARY_MODELS = ["gemma-4-31b-it"]
 FALLBACK_MODELS = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-flash-latest"]
 
@@ -96,9 +96,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+cors_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if not cors_allowed_origins:
+    import warnings
+    warnings.warn(
+        "CORS_ALLOWED_ORIGINS is not set; all cross-origin browser requests will be blocked. "
+        "Set CORS_ALLOWED_ORIGINS to a comma-separated list of trusted origins.",
+        stacklevel=1,
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -220,13 +233,13 @@ You are now loaded with the execution context for this interactive session.
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/health", response_model=HealthResponse)
-async def health():
+def health():
     """Health check endpoint."""
     return HealthResponse(status="ok", primary_model=PRIMARY_MODELS[0])
 
 
 @app.post("/api/v1/chat/start", response_model=ChatStartResponse)
-async def start_chat(req: ChatStartRequest):
+def start_chat(req: ChatStartRequest):
     """Create a new chat session grounded with execution context."""
     _cleanup_expired_sessions()
 
@@ -261,10 +274,12 @@ async def start_chat(req: ChatStartRequest):
 
 
 @app.post("/api/v1/chat/message", response_model=ChatMessageResponse)
-async def send_message(req: ChatMessageRequest):
+def send_message(req: ChatMessageRequest):
     """Send a message to an existing chat session."""
     session = chat_sessions.get(req.session_id)
-    if not session:
+    if not session or time.time() - session["created_at"] > SESSION_TTL_SECONDS:
+        if req.session_id in chat_sessions:
+            del chat_sessions[req.session_id]
         raise HTTPException(status_code=404, detail="Session not found or expired.")
 
     try:
@@ -276,7 +291,7 @@ async def send_message(req: ChatMessageRequest):
 
 
 @app.post("/api/v1/generate", response_model=GenerateResponse)
-async def generate(req: GenerateRequest):
+def generate(req: GenerateRequest):
     """Single-turn generation for diagnose/fix operations."""
     models = (FALLBACK_MODELS + PRIMARY_MODELS) if req.use_fallback else (PRIMARY_MODELS + FALLBACK_MODELS)
     last_exception = None

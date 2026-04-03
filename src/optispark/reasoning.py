@@ -9,6 +9,14 @@ import os
 import requests
 
 
+def _safe_detail(resp: requests.Response) -> str:
+    """Extract error detail from response, falling back to raw text if not JSON."""
+    try:
+        return resp.json().get("detail", resp.text)
+    except (ValueError, KeyError):
+        return resp.text
+
+
 # Server URL resolution order:
 # 1. Explicit server_url passed to constructor
 # 2. OPTISPARK_SERVER_URL environment variable
@@ -34,7 +42,7 @@ class _RemoteChatSession:
             timeout=120,
         )
         if resp.status_code != 200:
-            detail = resp.json().get("detail", resp.text)
+            detail = _safe_detail(resp)
             raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
 
         class _Response:
@@ -63,14 +71,14 @@ class ReasoningEngine:
                 json={"combined_context": combined_context},
                 timeout=60,
             )
-        except requests.ConnectionError:
+        except requests.exceptions.RequestException:
             raise RuntimeError(
                 f"Could not connect to OptiSpark backend at {self.server_url}. "
                 f"Is the server running?"
             )
 
         if resp.status_code != 200:
-            detail = resp.json().get("detail", resp.text)
+            detail = _safe_detail(resp)
             raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
 
         data = resp.json()
@@ -114,14 +122,14 @@ class ReasoningEngine:
                 json={"prompt": prompt, "use_fallback": use_fallback},
                 timeout=120,
             )
-        except requests.ConnectionError:
+        except requests.exceptions.RequestException:
             raise RuntimeError(
                 f"Could not connect to OptiSpark backend at {self.server_url}. "
                 f"Is the server running?"
             )
 
         if resp.status_code != 200:
-            detail = resp.json().get("detail", resp.text)
+            detail = _safe_detail(resp)
             raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
 
         data = resp.json()

@@ -30,3 +30,6 @@ eggs/
 .pytest_cache/
 htmlcov/
 *.egg-info/
+
+# Build artifacts / test output
+test_output.txt
