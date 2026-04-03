@@ -12,7 +12,7 @@ def mock_post():
 def test_start_chat_success(mock_post):
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"session_id": "abc-123", "model_used": "gemma-3-27b"}
+    resp.json.return_value = {"session_id": "abc-123", "model_used": "gemma-4-31b-it"}
     mock_post.return_value = resp
 
     engine = ReasoningEngine(server_url="http://localhost:8000")
@@ -20,7 +20,7 @@ def test_start_chat_success(mock_post):
 
     assert isinstance(chat, _RemoteChatSession)
     assert chat.session_id == "abc-123"
-    assert engine.model_id == "gemma-3-27b"
+    assert engine.model_id == "gemma-4-31b-it"
 
 
 def test_start_chat_connection_error(mock_post):
@@ -71,7 +71,7 @@ def test_send_message_error(mock_post):
 def test_diagnose(mock_post):
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"text": "Skew detected", "model_used": "gemma-3-27b"}
+    resp.json.return_value = {"text": "Skew detected", "model_used": "gemma-4-31b-it"}
     mock_post.return_value = resp
 
     engine = ReasoningEngine(server_url="http://localhost:8000")
@@ -86,7 +86,7 @@ def test_diagnose(mock_post):
 def test_generate_fix_uses_fallback(mock_post):
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"text": "df_opt = df", "model_used": "gemini-2.0-flash"}
+    resp.json.return_value = {"text": "df_opt = df", "model_used": "gemini-3-flash-preview"}
     mock_post.return_value = resp
 
     engine = ReasoningEngine(server_url="http://localhost:8000")

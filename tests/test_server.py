@@ -20,7 +20,7 @@ def test_health():
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["primary_model"] == "gemma-3-27b"
+    assert data["primary_model"] == "gemma-4-31b-it"
 
 
 @patch("server.main.client")
@@ -34,7 +34,7 @@ def test_start_chat_success(mock_genai_client):
     assert resp.status_code == 200
     data = resp.json()
     assert "session_id" in data
-    assert data["model_used"] == "gemma-3-27b"
+    assert data["model_used"] == "gemma-4-31b-it"
 
 
 @patch("server.main.client")
@@ -112,7 +112,7 @@ def test_generate_success(mock_genai_client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["text"] == "df_opt = df.repartition(200)"
-    assert data["model_used"] == "gemma-3-27b"
+    assert data["model_used"] == "gemma-4-31b-it"
 
 
 @patch("server.main.client")
@@ -127,7 +127,7 @@ def test_generate_with_fallback(mock_genai_client):
     })
     assert resp.status_code == 200
     # When use_fallback=True, Gemini models are tried first
-    assert resp.json()["model_used"] == "gemini-2.0-flash"
+    assert resp.json()["model_used"] == "gemini-3-flash-preview"
 
 
 @patch("server.main.client")

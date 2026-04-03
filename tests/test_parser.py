@@ -58,18 +58,17 @@ def test_extract_features_from_system_tables_success():
     assert res[0]["stage_id"] == "ServerlessQuery"
     assert res[0]["skew_ratio"] == 5.0  # 500 / 100
 
-def test_extract_features_from_system_tables_empty(spark):
+def test_extract_features_from_system_tables_empty():
     assert extract_features_from_system_tables(None, "query123") is None
-    assert extract_features_from_system_tables(spark, None) is None
+    from unittest.mock import MagicMock
+    mock_spark = MagicMock()
+    assert extract_features_from_system_tables(mock_spark, None) is None
 
-def test_extract_features_from_system_tables_fail(spark):
-    # force exception
-    original_sql = spark.sql
-    try:
-        spark.sql = lambda x: 1/0
-        assert extract_features_from_system_tables(spark, "q1") is None
-    finally:
-        spark.sql = original_sql
+def test_extract_features_from_system_tables_fail():
+    from unittest.mock import MagicMock
+    mock_spark = MagicMock()
+    mock_spark.sql.side_effect = ZeroDivisionError("boom")
+    assert extract_features_from_system_tables(mock_spark, "q1") is None
 
 def test_extract_features_from_logs_empty():
     assert extract_features_from_logs("/invalid/path") is None

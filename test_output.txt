@@ -26,11 +26,11 @@ src\optispark\benchmark.py      44      1    98%   70
 src\optispark\cli.py            15      1    93%   46
 src\optispark\listener.py       25      1    96%   27
 src\optispark\parser.py         82      2    98%   14, 51
-src\optispark\reasoning.py      48      0   100%
+src\optispark\reasoning.py      49      0   100%
 src\optispark\safety.py         14      0   100%
 ----------------------------------------------------------
-TOTAL                          628     26    96%
-============================= 61 passed in 19.46s =============================
-SUCCESS: The process with PID 4896 (child process of PID 21948) has been terminated.
-SUCCESS: The process with PID 21948 (child process of PID 15824) has been terminated.
-SUCCESS: The process with PID 15824 (child process of PID 16744) has been terminated.
+TOTAL                          629     26    96%
+============================= 61 passed in 18.56s =============================
+SUCCESS: The process with PID 20692 (child process of PID 8916) has been terminated.
+SUCCESS: The process with PID 8916 (child process of PID 23332) has been terminated.
+SUCCESS: The process with PID 23332 (child process of PID 15580) has been terminated.
