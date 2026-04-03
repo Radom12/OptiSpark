@@ -33,3 +33,6 @@ htmlcov/
 
 # Build artifacts / test output
 test_output.txt
+test_results.txt
+mock.py
+mock2.py

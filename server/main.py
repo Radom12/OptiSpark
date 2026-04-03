@@ -67,12 +67,19 @@ You are **OptiSpark**, an elite PySpark autonomous execution agent.
 # In-Memory Session Store
 # ═══════════════════════════════════════════════════════════════════════════
 
-chat_sessions = {}  # {session_id: {"chat": chat_obj, "model": model_id, "created_at": timestamp}}
+chat_sessions = {}  # {session_id: {"chat": chat_obj, "model": model_id, "last_activity": timestamp}}
+
+def _get_session_timestamp(session: dict) -> float:
+    """Return the most recent activity timestamp for a session, falling back to created_at.
+
+    Returns 0 if neither key is present, so the session is treated as expired.
+    """
+    return session.get("last_activity", session.get("created_at", 0))
 
 def _cleanup_expired_sessions():
     """Remove sessions older than TTL."""
     now = time.time()
-    expired = [sid for sid, s in chat_sessions.items() if now - s["last_activity"] > SESSION_TTL_SECONDS]
+    expired = [sid for sid, s in chat_sessions.items() if now - _get_session_timestamp(s) > SESSION_TTL_SECONDS]
     for sid in expired:
         del chat_sessions[sid]
 
@@ -281,7 +288,7 @@ def start_chat(req: ChatStartRequest):
 def send_message(req: ChatMessageRequest):
     """Send a message to an existing chat session."""
     session = chat_sessions.get(req.session_id)
-    if not session or time.time() - session["last_activity"] > SESSION_TTL_SECONDS:
+    if not session or time.time() - _get_session_timestamp(session) > SESSION_TTL_SECONDS:
         if req.session_id in chat_sessions:
             del chat_sessions[req.session_id]
         raise HTTPException(status_code=404, detail="Session not found or expired.")

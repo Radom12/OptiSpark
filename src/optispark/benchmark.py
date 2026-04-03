@@ -17,12 +17,12 @@ def run_benchmark(original_df, generated_code_str):
         print("  ⏳ Preparing data sample for benchmark...")
         print("     (⚠️ Warning: Measuring the skewed baseline plan may take a minute...)")
         try:
-            total_rows = original_df.count()
+            total_rows = int(original_df.count())
             sample_size = max(1000, int(total_rows * 0.001))
         except Exception:
             sample_size = 10000
         df_sampled = original_df.limit(sample_size).cache()
-        baseline_rows = df_sampled.count()
+        baseline_rows = int(df_sampled.count())
         print(f" ✔ (Cached {baseline_rows:,} rows)")
         
         if baseline_rows == 0:

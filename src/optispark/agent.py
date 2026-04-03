@@ -406,6 +406,13 @@ def _build_sandbox_env(df, spark, kwargs):
         "when": F.when,
     }
     if kwargs:
+        reserved_names = set(env)
+        colliding_names = sorted(reserved_names.intersection(kwargs))
+        if colliding_names:
+            raise ValueError(
+                "kwargs contains reserved sandbox names that cannot be overridden: "
+                + ", ".join(colliding_names)
+            )
         env.update(kwargs)
     return env
 
@@ -418,15 +425,16 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
     for attempt in range(max_retries):
         print(f"  {C.BLUE}◆{C.RESET} Executing securely in background...", end="")
         try:
-            local_env = _build_sandbox_env(df, spark, kwargs)
-            exec(code_block.strip(), {"__builtins__": __builtins__}, local_env)
+            sandbox_env = _build_sandbox_env(df, spark, kwargs)
+            sandbox_env["__builtins__"] = __builtins__
+            exec(code_block.strip(), sandbox_env, sandbox_env)
 
-            if "df_opt" in local_env:
-                session_state["df_opt"] = local_env["df_opt"]
+            if "df_opt" in sandbox_env:
+                session_state["df_opt"] = sandbox_env["df_opt"]
                 print(f" {C.GREEN}✔ Success!{C.RESET}")
                 print(f"  {C.GRAY}├─ The optimized DataFrame is now active in this chat session.{C.RESET}")
                 print(f"  {C.GRAY}└─ It will be returned when you type 'exit'.{C.RESET}")
-                return local_env["df_opt"]
+                return sandbox_env["df_opt"]
             else:
                 print(f" {C.RED}✖ Error: The code executed but did not assign 'df_opt'.{C.RESET}")
                 return df
