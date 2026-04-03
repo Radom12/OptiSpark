@@ -30,10 +30,10 @@ if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY environment variable is required on the server.")
 
 # Model priority: Gemma 3 27B first (free, fast), Gemini only for fallback
-PRIMARY_MODELS = ["gemma-3-27b"]
-FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+PRIMARY_MODELS = ["gemma-4-31b-it"]
+FALLBACK_MODELS = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-flash-latest"]
 
-SESSION_TTL_SECONDS = 3600  # 1 hour
+SESSION_TTL_SECONDS = 3600
 
 # ═══════════════════════════════════════════════════════════════════════════
 # System Prompt (server-side only — never shipped to clients)
