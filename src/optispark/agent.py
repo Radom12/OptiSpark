@@ -328,9 +328,12 @@ class OptiSpark:
             except Exception:
                 context["execution_plan"] = "Could not extract execution plan"
 
-        # Partition count
+        # Partition count (can trigger lazy evaluation — use thread timeout)
         try:
-            context["num_partitions"] = df.rdd.getNumPartitions()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(lambda: df.rdd.getNumPartitions())
+                context["num_partitions"] = future.result(timeout=10)
         except Exception:
             context["num_partitions"] = "?"
 
