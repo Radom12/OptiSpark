@@ -7,21 +7,18 @@ import os
 @patch("optispark.agent.extract_features_from_logs")
 @patch("optispark.agent.extract_features_from_system_tables")
 def test_optimize_success(mock_sys, mock_logs, mock_engine):
-    # Setup mocks
     mock_sys.return_value = [{"stage_id": 1}]
     engine_instance = MagicMock()
     engine_instance.diagnose.return_value = "Bad Join"
     engine_instance.generate_fix.return_value = "df_opt = df"
     mock_engine.return_value = engine_instance
-    
-    os.environ["GEMINI_API_KEY"] = "fake"
+
     agent = OptiSpark(log_dir="/dev/null")
-    
+
     with patch("optispark.agent.validate_safety") as mock_safety:
         mock_safety.return_value = (True, "Safe")
-        # Call optimize
         agent.optimize(spark=MagicMock(), query_id="123", target_df=MagicMock())
-        
+
         engine_instance.diagnose.assert_called_once()
         engine_instance.generate_fix.assert_called_once()
 
@@ -29,55 +26,63 @@ def test_optimize_success(mock_sys, mock_logs, mock_engine):
 @patch("optispark.agent.extract_features_from_system_tables")
 def test_optimize_no_metrics(mock_sys, mock_engine):
     mock_sys.return_value = None
-    
-    agent = OptiSpark(api_key="fake")
-    # Should abort early
+
+    agent = OptiSpark()
     agent.optimize(spark=MagicMock(), query_id="123")
-    
+
     mock_engine.return_value.diagnose.assert_not_called()
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("optispark.agent.extract_features_from_system_tables")
+def test_optimize_safety_blocked(mock_sys, mock_engine):
+    mock_sys.return_value = [{"stage_id": 1}]
+    engine_instance = MagicMock()
+    engine_instance.diagnose.return_value = "Diagnosis"
+    engine_instance.generate_fix.return_value = "code"
+    mock_engine.return_value = engine_instance
+
+    agent = OptiSpark()
+
+    with patch("optispark.agent.validate_safety") as mock_safety:
+        mock_safety.return_value = (False, "OOM risk")
+        agent.optimize(spark=MagicMock(), query_id="123", target_df=MagicMock())
 
 @patch("optispark.agent.ReasoningEngine")
 @patch("builtins.input")
 def test_chat_exit(mock_input, mock_engine, spark):
-    # Setup REPL sequence: just type 'exit'
     mock_input.side_effect = ["exit"]
-    
+
     chat_session = MagicMock()
     mock_engine.return_value.start_chat.return_value = chat_session
-    
-    agent = OptiSpark(api_key="fake")
+
+    agent = OptiSpark()
     df = spark.range(5)
     returned_df = agent.chat(df=df)
-    
+
     assert returned_df == df
 
 @patch("optispark.agent.ReasoningEngine")
 @patch("builtins.input")
 def test_chat_interaction_and_execution(mock_input, mock_engine, spark):
-    # Simulate user sending a message, accepting the code, then exiting
     mock_input.side_effect = ["fix this", "y", "exit"]
-    
+
     chat_session = MagicMock()
     resp = MagicMock()
-    # Provide an executable block
     resp.text = """Some analysis.\n```python\ndf_opt = df.withColumn('opt', F.lit(1))\n```\n"""
     chat_session.send_message.return_value = resp
     mock_engine.return_value.start_chat.return_value = chat_session
-    
-    agent = OptiSpark(api_key="fake")
+
+    agent = OptiSpark()
     df = spark.range(5)
-    
-    # Capture printed output to avoid clutter, just check if it returns df_opt
     returned_df = agent.chat(df=df)
-    
+
     assert "opt" in returned_df.columns
 
 @patch("optispark.agent.ReasoningEngine")
 @patch("builtins.input", side_effect=["/help", "/m", "/p", "/s", "/clear", "exit"])
 @patch("optispark.agent._clear_screen")
 def test_chat_commands(mock_clear, mock_input, mock_engine, spark):
-    # Test UI commands just to run through them
-    agent = OptiSpark(api_key="fake")
+    agent = OptiSpark()
     agent.chat(df=spark.range(1))
     mock_clear.assert_called()
 
@@ -85,15 +90,14 @@ def test_chat_commands(mock_clear, mock_input, mock_engine, spark):
 @patch("builtins.input", side_effect=["fix", "y", "/b", "exit"])
 @patch("optispark.benchmark.run_benchmark")
 def test_chat_benchmark(mock_benchmark, mock_input, mock_engine, spark):
-    # Test /benchmark integration
     chat_session = MagicMock()
     resp = MagicMock()
     resp.text = "```python\ndf_opt = df\n```"
     chat_session.send_message.return_value = resp
     mock_engine.return_value.start_chat.return_value = chat_session
     mock_benchmark.return_value = {"status": "success", "original_time_sec": 1, "fixed_time_sec": 0.5, "improvement_pct": 50}
-    
-    agent = OptiSpark(api_key="fake")
+
+    agent = OptiSpark()
     agent.chat(df=spark.range(1))
     mock_benchmark.assert_called_once()
 
@@ -101,7 +105,8 @@ def test_chat_benchmark(mock_benchmark, mock_input, mock_engine, spark):
 @patch("builtins.input")
 def test_chat_keyboard_interrupt(mock_input, mock_engine):
     mock_input.side_effect = KeyboardInterrupt()
-    agent = OptiSpark(api_key="fake")
+    agent = OptiSpark()
+    agent.chat()
 
 @patch("optispark.agent.ReasoningEngine")
 @patch("builtins.input", side_effect=["exit"])
@@ -121,8 +126,8 @@ def test_agent_introspect_error_handling(mock_input, mock_engine, spark):
             return BadRDD()
         def explain(self, mode="extended"):
             raise Exception("Explain failed")
-    
-    agent = OptiSpark(api_key="fake")
+
+    agent = OptiSpark()
     bdf = BadDF()
     res = agent.chat(df=bdf)
     assert res == bdf
@@ -134,8 +139,60 @@ def test_agent_introspect_error_handling(mock_input, mock_engine, spark):
 def test_agent_chat_legacy_path(mock_input, mock_fetch, mock_sys, mock_engine, spark):
     mock_sys.return_value = [{"stage_id": 1, "skew_ratio": 4.0}]
     mock_fetch.return_value = "code"
-    agent = OptiSpark(api_key="fake")
+    agent = OptiSpark()
     agent.chat(spark=spark, query_id="123")
     mock_sys.assert_called_once()
-    agent.chat() # No df, general mode
-    # Should exit cleanly
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["exit"])
+def test_agent_chat_log_dir_path(mock_input, mock_engine):
+    with patch("optispark.agent.extract_features_from_logs") as mock_logs:
+        mock_logs.return_value = [{"stage_id": 1, "skew_ratio": 2.0}]
+        agent = OptiSpark(log_dir="/fake/logs")
+        agent.chat()
+        mock_logs.assert_called_once()
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["exit"])
+def test_agent_chat_session_init_failure(mock_input, mock_engine):
+    mock_engine.return_value.start_chat.side_effect = RuntimeError("Backend down")
+    agent = OptiSpark()
+    result = agent.chat()
+    assert result is None
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["fix this", "y", "exit"])
+def test_chat_exec_failure_self_heal(mock_input, mock_engine, spark):
+    chat_session = MagicMock()
+    resp = MagicMock()
+    # Code that will fail (undefined_var)
+    resp.text = "```python\ndf_opt = undefined_var\n```"
+    correction = MagicMock()
+    correction.text = "```python\ndf_opt = df.withColumn('fixed', F.lit(1))\n```"
+    chat_session.send_message.side_effect = [resp, correction]
+    mock_engine.return_value.start_chat.return_value = chat_session
+
+    agent = OptiSpark()
+    agent.chat(df=spark.range(5))
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["ask something", "exit"])
+def test_chat_generic_exception(mock_input, mock_engine):
+    chat_session = MagicMock()
+    chat_session.send_message.side_effect = [Exception("Random error"), MagicMock(text="ok")]
+    mock_engine.return_value.start_chat.return_value = chat_session
+
+    agent = OptiSpark()
+    agent.chat()
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["/b", "exit"])
+def test_chat_benchmark_no_code(mock_input, mock_engine):
+    agent = OptiSpark()
+    agent.chat()
+
+@patch("optispark.agent.ReasoningEngine")
+@patch("builtins.input", side_effect=["", "exit"])
+def test_chat_empty_input(mock_input, mock_engine):
+    agent = OptiSpark()
+    agent.chat()

@@ -46,7 +46,7 @@ class OptiSpark:
     The OptiSpark Agent.
 
     Usage:
-        agent = OptiSpark(api_key="your_gemini_key")
+        agent = OptiSpark()
 
         # One-shot optimization (v0.1.0)
         agent.optimize(spark=spark, query_id="...", target_df=df)
@@ -55,20 +55,15 @@ class OptiSpark:
         agent.chat(df=my_problematic_df)
     """
 
-    def __init__(self, api_key=None, log_dir=None):
+    def __init__(self, log_dir=None, server_url=None):
         """Initialize the OptiSpark agent.
 
         Args:
-            api_key: Gemini API key. Falls back to GEMINI_API_KEY env var.
             log_dir: Path to local Spark event logs (for Standard clusters).
+            server_url: Optional custom backend URL. Uses default if not provided.
         """
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                f"{C.RED}✖ GEMINI_API_KEY not provided and not found in environment.{C.RESET}"
-            )
         self.log_dir = log_dir
-        self.engine = ReasoningEngine(api_key=self.api_key)
+        self.engine = ReasoningEngine(server_url=server_url)
 
     # ═══════════════════════════════════════════════════════════════════════
     # v0.1.0 — One-Shot Optimization

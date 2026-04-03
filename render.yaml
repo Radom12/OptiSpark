@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: optispark-api
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # You will set this manually in Render dashboard
+    healthCheckPath: /health
+    plan: free

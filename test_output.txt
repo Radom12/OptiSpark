@@ -1,0 +1,36 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\Abhyu\OneDrive\Desktop\OptiSpark\OptiSpark
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-7.1.0
+collected 61 items
+
+tests\test_agent.py ................                                     [ 26%]
+tests\test_agent_ui.py ..                                                [ 29%]
+tests\test_benchmark.py .....                                            [ 37%]
+tests\test_cli.py ...                                                    [ 42%]
+tests\test_listener.py .                                                 [ 44%]
+tests\test_parser.py ......                                              [ 54%]
+tests\test_reasoning.py ..........                                       [ 70%]
+tests\test_safety.py .....                                               [ 78%]
+tests\test_server.py .............                                       [100%]
+
+=============================== tests coverage ================================
+______________ coverage: platform win32, python 3.13.12-final-0 _______________
+
+Name                         Stmts   Miss  Cover   Missing
+----------------------------------------------------------
+src\optispark\__init__.py        3      0   100%
+src\optispark\agent.py         397     21    95%   151-152, 158, 218-219, 269, 327, 370-372, 376-385, 518-519, 531-532
+src\optispark\benchmark.py      44      1    98%   70
+src\optispark\cli.py            15      1    93%   46
+src\optispark\listener.py       25      1    96%   27
+src\optispark\parser.py         82      2    98%   14, 51
+src\optispark\reasoning.py      48      0   100%
+src\optispark\safety.py         14      0   100%
+----------------------------------------------------------
+TOTAL                          628     26    96%
+============================= 61 passed in 19.46s =============================
+SUCCESS: The process with PID 4896 (child process of PID 21948) has been terminated.
+SUCCESS: The process with PID 21948 (child process of PID 15824) has been terminated.
+SUCCESS: The process with PID 15824 (child process of PID 16744) has been terminated.

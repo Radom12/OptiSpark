@@ -24,3 +24,9 @@ downloads/
 eggs/
 .eggs/
 .databricks
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+*.egg-info/

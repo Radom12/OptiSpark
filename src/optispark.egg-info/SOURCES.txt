@@ -16,9 +16,11 @@ src/optispark.egg-info/entry_points.txt
 src/optispark.egg-info/requires.txt
 src/optispark.egg-info/top_level.txt
 tests/test_agent.py
+tests/test_agent_ui.py
 tests/test_benchmark.py
 tests/test_cli.py
 tests/test_listener.py
 tests/test_parser.py
 tests/test_reasoning.py
 tests/test_safety.py
+tests/test_server.py

@@ -46,18 +46,17 @@ def test_calculate_bottlenecks():
     small_feats = next(f for f in features if f["stage_id"] == 3)
     assert "SMALL_FILES" in small_feats["flags"]
 
-def test_extract_features_from_system_tables_success(spark):
-    # Mocking spark.sql logic via a dummy dataframe
-    original_sql = spark.sql
-    try:
-        spark.sql = lambda x: spark.createDataFrame([(1000, 100, 500)], ["total_duration_ms", "avg_task_duration", "max_task_duration_ms"])
-        
-        res = extract_features_from_system_tables(spark, "query123")
-        assert len(res) == 1
-        assert res[0]["stage_id"] == "ServerlessQuery"
-        assert res[0]["skew_ratio"] == 5.0 # 500 / 100
-    finally:
-        spark.sql = original_sql
+def test_extract_features_from_system_tables_success():
+    from unittest.mock import MagicMock
+    # Create a fully mocked spark session that returns predictable data
+    mock_spark = MagicMock()
+    mock_row = {"total_duration_ms": 1000, "avg_task_duration": 100, "max_task_duration_ms": 500}
+    mock_spark.sql.return_value.collect.return_value = [mock_row]
+
+    res = extract_features_from_system_tables(mock_spark, "query123")
+    assert len(res) == 1
+    assert res[0]["stage_id"] == "ServerlessQuery"
+    assert res[0]["skew_ratio"] == 5.0  # 500 / 100
 
 def test_extract_features_from_system_tables_empty(spark):
     assert extract_features_from_system_tables(None, "query123") is None
