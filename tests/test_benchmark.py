@@ -4,14 +4,15 @@ from optispark.benchmark import run_benchmark
 
 
 def _make_mock_df(row_count=10):
-    """Create a mock DataFrame that works with benchmark's sample/count/cache flow."""
+    """Create a mock DataFrame that works with benchmark's limit/count/cache flow."""
     mock_df = MagicMock()
     mock_df.sparkSession = MagicMock()
+    mock_df.count.return_value = row_count * 1000  # Total rows (if needed)
 
-    # sample().cache() returns a sampled df
+    # limit().cache() returns a sampled df
     sampled = MagicMock()
     sampled.count.return_value = row_count
-    mock_df.sample.return_value.cache.return_value = sampled
+    mock_df.limit.return_value.cache.return_value = sampled
 
     return mock_df, sampled
 
