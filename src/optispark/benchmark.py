@@ -11,11 +11,17 @@ def run_benchmark(original_df, generated_code_str):
     try:
         spark = original_df.sparkSession
         
-        # 1. Create a 0.1% Sample and cache it to avoid I/O skewing the CPU/Shuffle benchmark
-        print("  ⏳ Preparing 0.1% data sample for benchmark...")
+        # 1. Create a small sample and cache it.
+        # Use limit() instead of sample() because sample() evaluates the full plan first
+        # (which hangs on massive skewed joins). limit() short-circuits via LocalLimit.
+        print("  ⏳ Preparing data sample for benchmark...")
         print("     (⚠️ Warning: Measuring the skewed baseline plan may take a minute...)")
-        df_sampled = original_df.sample(fraction=0.001, seed=42).cache()
-        # Force materialization and caching before timing
+        try:
+            total_rows = original_df.count()
+            sample_size = max(1000, int(total_rows * 0.001))
+        except Exception:
+            sample_size = 10000
+        df_sampled = original_df.limit(sample_size).cache()
         baseline_rows = df_sampled.count()
         print(f" ✔ (Cached {baseline_rows:,} rows)")
         

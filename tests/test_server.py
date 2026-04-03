@@ -182,7 +182,7 @@ def test_cleanup_expired_sessions():
     chat_sessions["old-session"] = {
         "chat": MagicMock(),
         "model": "test",
-        "created_at": time.time() - 7200  # 2 hours ago
+        "last_activity": time.time() - 7200  # 2 hours ago
     }
     _cleanup_expired_sessions()
     assert "old-session" not in chat_sessions

@@ -43,9 +43,9 @@ SYSTEM_PROMPT = """
 You are **OptiSpark**, an elite PySpark autonomous execution agent.
 
 ## Your Identity
-- You are an interactive AI agent embedded in a Databricks notebook environment.
+- You are an interactive AI agent embedded in the user's PySpark environment (Databricks, EMR, Dataproc, or local Spark).
 - You diagnose Apache Spark bottlenecks and generate **executable** PySpark code fixes.
-- You have direct access to the user's actual Spark DAG execution metrics, cluster hardware config, and DataFrame schema.
+- You have direct access to the user's actual Spark execution plan, cluster config, and DataFrame schema.
 
 ## Your Capabilities
 1. **Bottleneck Detection**: Identify data skew, shuffle spill, small file problems, and broadcast join opportunities.
@@ -72,7 +72,7 @@ chat_sessions = {}  # {session_id: {"chat": chat_obj, "model": model_id, "create
 def _cleanup_expired_sessions():
     """Remove sessions older than TTL."""
     now = time.time()
-    expired = [sid for sid, s in chat_sessions.items() if now - s["created_at"] > SESSION_TTL_SECONDS]
+    expired = [sid for sid, s in chat_sessions.items() if now - s["last_activity"] > SESSION_TTL_SECONDS]
     for sid in expired:
         del chat_sessions[sid]
 
@@ -267,7 +267,7 @@ def start_chat(req: ChatStartRequest):
             chat_sessions[session_id] = {
                 "chat": chat,
                 "model": model_id,
-                "created_at": time.time(),
+                "last_activity": time.time(),
             }
             return ChatStartResponse(session_id=session_id, model_used=model_id)
         except Exception as e:
@@ -281,14 +281,14 @@ def start_chat(req: ChatStartRequest):
 def send_message(req: ChatMessageRequest):
     """Send a message to an existing chat session."""
     session = chat_sessions.get(req.session_id)
-    if not session or time.time() - session["created_at"] > SESSION_TTL_SECONDS:
+    if not session or time.time() - session["last_activity"] > SESSION_TTL_SECONDS:
         if req.session_id in chat_sessions:
             del chat_sessions[req.session_id]
         raise HTTPException(status_code=404, detail="Session not found or expired.")
 
     try:
         response = session["chat"].send_message(req.message)
-        session["created_at"] = time.time()  # Refresh TTL
+        session["last_activity"] = time.time()  # Refresh TTL
         return ChatMessageResponse(text=response.text, session_id=req.session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Model error: {str(e)}")

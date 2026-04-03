@@ -4,6 +4,7 @@ Supports both one-shot optimization (v0.1.0) and interactive REPL chat (v0.2.0).
 """
 
 import os
+import re
 import json
 import textwrap
 from datetime import datetime
@@ -238,10 +239,8 @@ class OptiSpark:
                 _print_response(response.text, session_state["message_count"])
 
                 # Extract python blocks globally for benchmarking
-                import re
                 blocks = re.findall(r"```python\n(.*?)```", response.text, re.DOTALL)
                 if blocks:
-                    # Save the last generated block for /benchmark runs
                     session_state["last_code"] = blocks[-1]
 
                 # Auto-Execute Sandbox (v0.3.0)
@@ -251,37 +250,7 @@ class OptiSpark:
                             print(f"\n  {C.YELLOW}{C.BOLD}⚡ OptiSpark generated an executable fix.{C.RESET}")
                             confirm = input(f"  {C.BLUE}❯ Apply this code to your DataFrame? [y/N]: {C.RESET}").strip().lower()
                             if confirm == 'y':
-                                print(f"  {C.BLUE}◆{C.RESET} Executing securely in background...", end="")
-                                try:
-                                    import pyspark.sql.functions as F
-                                    from pyspark.sql import Window
-                                    
-                                    # Provide secure local environment with standard PySpark aliases and upstream dataframes
-                                    spark_session = df.sparkSession if df is not None else spark
-                                    local_env = {"df": df, "spark": spark_session, "F": F, "Window": Window}
-                                    if kwargs:
-                                        local_env.update(kwargs)
-                                    exec(block.strip(), {}, local_env)
-                                    
-                                    if "df_opt" in local_env:
-                                        session_state["df_opt"] = local_env["df_opt"]
-                                        df = session_state["df_opt"]  # Update REPL reference
-                                        print(f" {C.GREEN}✔ Success!{C.RESET}")
-                                        print(f"  {C.GRAY}├─ The optimized DataFrame is now active in this chat session.{C.RESET}")
-                                        print(f"  {C.GRAY}└─ It will be returned when you type 'exit'.{C.RESET}")
-                                    else:
-                                        print(f" {C.RED}✖ Error: The code executed but did not assign 'df_opt'.{C.RESET}")
-                                except Exception as ex:
-                                    print(f" {C.RED}✖ Execution Failed{C.RESET}")
-                                    print(f"  {C.RED}Error: {str(ex)}{C.RESET}")
-                                    print(f"\n  {C.GRAY}Feeding the stack trace back to the agent...{C.RESET}")
-                                    
-                                    # Self-Healing loop
-                                    error_prompt = f"The code you provided failed to execute with this error:\n```\n{str(ex)}\n```\nPlease fix the code and output a new python block assigning the result to `df_opt`."
-                                    session_state["message_count"] += 1
-                                    _print_thinking()
-                                    correction = chat_session.send_message(error_prompt)
-                                    _print_response(correction.text, session_state["message_count"])
+                                df = _execute_sandbox(block, df, spark, kwargs, session_state, chat_session)
                             break  # Only ask for the first valid block
 
             except KeyboardInterrupt:
@@ -352,15 +321,17 @@ class OptiSpark:
             context["estimated_size_bytes"] = None
             context["estimated_size_mb"] = None
 
-        # Logical plan string (more readable)
+        # Logical plan string (more readable) — also truncated
         try:
-            context["logical_plan"] = df._jdf.queryExecution().optimizedPlan().toString()
+            logical = df._jdf.queryExecution().optimizedPlan().toString()
+            context["logical_plan"] = logical[:MAX_PLAN_LEN] if len(logical) > MAX_PLAN_LEN else logical
         except Exception:
             context["logical_plan"] = None
             
         # Parsed (original) logical plan - helps model see the original pipeline operations
         try:
-            context["parsed_logical_plan"] = df._jdf.queryExecution().logical().toString()
+            parsed = df._jdf.queryExecution().logical().toString()
+            context["parsed_logical_plan"] = parsed[:MAX_PLAN_LEN] if len(parsed) > MAX_PLAN_LEN else parsed
         except Exception:
             context["parsed_logical_plan"] = None
 
@@ -411,6 +382,83 @@ class OptiSpark:
         if not context:
             context["status"] = "No context available — general mode"
         return context
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sandbox Execution Engine
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _build_sandbox_env(df, spark, kwargs):
+    """Build the local execution environment for exec() with all common PySpark imports."""
+    import pyspark.sql.functions as F
+    from pyspark.sql import Window
+    from pyspark.sql import types as T
+
+    spark_session = df.sparkSession if df is not None else spark
+    env = {
+        "df": df,
+        "spark": spark_session,
+        "F": F,
+        "Window": Window,
+        "T": T,
+        "col": F.col,
+        "lit": F.lit,
+        "when": F.when,
+    }
+    if kwargs:
+        env.update(kwargs)
+    return env
+
+
+def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=None, max_retries=3):
+    """Execute a code block in a sandboxed environment with self-healing retries.
+
+    Returns the updated df (optimized if successful, original if not).
+    """
+    for attempt in range(max_retries):
+        print(f"  {C.BLUE}◆{C.RESET} Executing securely in background...", end="")
+        try:
+            local_env = _build_sandbox_env(df, spark, kwargs)
+            exec(code_block.strip(), {"__builtins__": __builtins__}, local_env)
+
+            if "df_opt" in local_env:
+                session_state["df_opt"] = local_env["df_opt"]
+                print(f" {C.GREEN}✔ Success!{C.RESET}")
+                print(f"  {C.GRAY}├─ The optimized DataFrame is now active in this chat session.{C.RESET}")
+                print(f"  {C.GRAY}└─ It will be returned when you type 'exit'.{C.RESET}")
+                return local_env["df_opt"]
+            else:
+                print(f" {C.RED}✖ Error: The code executed but did not assign 'df_opt'.{C.RESET}")
+                return df
+
+        except Exception as ex:
+            print(f" {C.RED}✖ Execution Failed (attempt {attempt + 1}/{max_retries}){C.RESET}")
+            print(f"  {C.RED}Error: {str(ex)}{C.RESET}")
+
+            if chat_session and attempt < max_retries - 1:
+                print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
+                error_prompt = (
+                    f"The code you provided failed with this error:\n```\n{str(ex)}\n```\n"
+                    f"Please fix the code and output a new python block assigning the result to `df_opt`."
+                )
+                session_state["message_count"] += 1
+                _print_thinking()
+                try:
+                    correction = chat_session.send_message(error_prompt)
+                    _print_response(correction.text, session_state["message_count"])
+                    # Extract corrected code block and retry
+                    corrected_blocks = re.findall(r"```python\n(.*?)```", correction.text, re.DOTALL)
+                    if corrected_blocks:
+                        code_block = corrected_blocks[0]
+                        session_state["last_code"] = code_block
+                        continue
+                except Exception:
+                    pass
+
+            print(f"  {C.YELLOW}⚠ Could not auto-fix. You can ask the agent to try a different approach.{C.RESET}")
+            return df
+
+    return df
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -643,7 +691,6 @@ def _clear_screen():
 
 def _print_benchmark_results(results):
     """Render a premium ANSI table for the benchmark results."""
-    from optispark.agent import _Colors as C
     
     if results.get("status") == "error":
         print(f"\n  {C.RED}{C.BOLD}┌─ Benchmark Failed ──────────────────────────────────────────────┐{C.RESET}")
