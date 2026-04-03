@@ -94,13 +94,9 @@ bad_pipeline_df = (
 
 # COMMAND ----------
 
-import os
 from optispark import OptiSpark
 
-# Replace with your Gemini API Key
-os.environ["GEMINI_API_KEY"] = "YOUR_GEMINI_API_KEY_HERE"
-
-agent = OptiSpark(api_key=os.environ["GEMINI_API_KEY"])
+agent = OptiSpark()
 
 # Pass the fatal pipeline to the agent
 agent.chat(df=bad_pipeline_df)

@@ -22,7 +22,7 @@ setup(
     install_requires=[
         "pyspark>=3.0.0",
         "zstandard>=0.22.0",
-        "google-genai>=0.4.0",
+        "requests>=2.28.0",
         "python-dotenv>=1.0.0"
     ],
     entry_points={

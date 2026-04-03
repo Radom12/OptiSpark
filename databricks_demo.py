@@ -72,14 +72,9 @@ df_orders.groupBy("customer_id").count().orderBy(F.desc("count")).show(10, trunc
 
 # COMMAND ----------
 
-import os
 from optispark import OptiSpark
 
-# Set your Gemini API key (or use Databricks secrets)
-# os.environ["GEMINI_API_KEY"] = dbutils.secrets.get(scope="your-scope", key="gemini-api-key")
-os.environ["GEMINI_API_KEY"] = "YOUR_GEMINI_API_KEY_HERE"  # <-- replace this
-
-agent = OptiSpark(api_key=os.environ["GEMINI_API_KEY"])
+agent = OptiSpark()
 
 # Just pass the problematic DataFrame — the agent introspects it automatically!
 agent.chat(df=df_joined)

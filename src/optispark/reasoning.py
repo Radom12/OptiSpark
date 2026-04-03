@@ -1,82 +1,92 @@
 """
-OptiSpark Reasoning Engine — Gemini-powered PySpark diagnostics and chat.
-Supports both single-turn generation (v0.1.0) and multi-turn chat sessions (v0.2.0).
+OptiSpark Reasoning Engine — HTTP client that proxies to the OptiSpark backend API.
+All LLM logic (system prompts, context injection, model selection) lives server-side.
+The client never touches the AI API directly.
 """
 
 import json
-from google import genai
-from google.genai import types
+import os
+import requests
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# System Prompt — The identity and behavioral rules for the OptiSpark agent
-# ═══════════════════════════════════════════════════════════════════════════
+def _safe_detail(resp: requests.Response) -> str:
+    """Extract error detail from response, falling back to raw text if not JSON."""
+    try:
+        return resp.json().get("detail", resp.text)
+    except (ValueError, KeyError):
+        return resp.text
 
-SYSTEM_PROMPT = """
-You are **OptiSpark**, an elite PySpark autonomous execution agent.
 
-## Your Identity
-- You are an interactive AI agent embedded in a Databricks notebook environment.
-- You diagnose Apache Spark bottlenecks and generate **executable** PySpark code fixes.
-- You have direct access to the user's actual Spark DAG execution metrics, cluster hardware config, and DataFrame schema.
+# Server URL resolution order:
+# 1. Explicit server_url passed to constructor
+# 2. OPTISPARK_SERVER_URL environment variable
+# 3. Default production URL below
+DEFAULT_SERVER_URL = os.environ.get(
+    "OPTISPARK_SERVER_URL",
+    "https://optispark-api.onrender.com"  # Production
+)
 
-## Your Capabilities
-1. **Bottleneck Detection**: Identify data skew, shuffle spill, small file problems, and broadcast join opportunities.
-2. **Root Cause Analysis**: Map symptoms to root causes natively.
-3. **Auto-Execution Generation**: Your code will be executing *directly* in the user's live notebook session.
-4. **Safety Awareness**: Prevent OOM operations and out-of-core Cartesian joins.
 
-## Behavioral Rules
-- **Be precise**: Reference specific stage IDs, skew ratios, and memory constraints.
-- **Show the code**: You MUST include ONE highly optimized, runnable PySpark code block.
-- **Assignment Rule (CRITICAL)**: The final optimized DataFrame in your code block MUST be assigned to the variable `df_opt`. If you don't use `df_opt = ...`, the auto-fix engine will fail.
-- **Assume Context**: The user's input DataFrame is available in your block as the variable `df`. The `spark` session and PySpark `F` (functions) are also available.
-- **Explain**: Briefly explain the 'why' before the code block.
-- **Be concise**: Avoid filler. Lead with the diagnosis.
-- **Never fabricate metrics**: Only reference data from the injected context.
-"""
+class _RemoteChatSession:
+    """Lightweight wrapper that mimics a chat session over HTTP."""
+
+    def __init__(self, session_id: str, server_url: str):
+        self.session_id = session_id
+        self.server_url = server_url
+
+    def send_message(self, message: str):
+        """Send a message and return an object with a .text attribute."""
+        resp = requests.post(
+            f"{self.server_url}/api/v1/chat/message",
+            json={"session_id": self.session_id, "message": message},
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            detail = _safe_detail(resp)
+            raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
+
+        class _Response:
+            def __init__(self, text):
+                self.text = text
+
+        return _Response(resp.json()["text"])
 
 
 class ReasoningEngine:
-    """Gemini-based reasoning engine for PySpark diagnostics."""
+    """HTTP-based reasoning engine that delegates to the OptiSpark backend."""
 
-    def __init__(self, api_key):
-        self.client = genai.Client(api_key=api_key)
-        self.models = [
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite-preview",
-            "gemma-3-27b"
-        ]
+    def __init__(self, server_url=None):
+        self.server_url = (server_url or DEFAULT_SERVER_URL).rstrip("/")
+        self.model_id = None
 
     # ───────────────────────────────────────────────────────────────────
-    # v0.2.0 — Multi-Turn Chat Session
+    # v0.2.0 — Multi-Turn Chat Session (via backend)
     # ───────────────────────────────────────────────────────────────────
 
     def start_chat(self, combined_context):
-        """Initialize a Gemini Chat Session grounded with execution context."""
-        context_injection = self._build_context_injection(combined_context)
-        
-        last_exception = None
-        for model_id in self.models:
-            try:
-                chat = self.client.chats.create(
-                    model=model_id,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        temperature=0.2,
-                        max_output_tokens=4096,
-                    ),
-                )
-                # Inject the hidden context prompt to ground the LLM in real metrics
-                chat.send_message(context_injection)
-                self.model_id = model_id  # Save successful model for future reference if needed
-                return chat
-            except Exception as e:
-                # Catch quota exceeded, model not found, etc.
-                last_exception = e
-                print(f"Warning: Failed to start chat with {model_id} ({e}). Trying fallback...")
-                
-        raise RuntimeError(f"All fallback models failed. Last error: {last_exception}")
+        """Start a chat session on the backend, returns a RemoteChatSession."""
+        try:
+            resp = requests.post(
+                f"{self.server_url}/api/v1/chat/start",
+                json={"combined_context": combined_context},
+                timeout=60,
+            )
+        except requests.exceptions.RequestException:
+            raise RuntimeError(
+                f"Could not connect to OptiSpark backend at {self.server_url}. "
+                f"Is the server running?"
+            )
+
+        if resp.status_code != 200:
+            detail = _safe_detail(resp)
+            raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
+
+        data = resp.json()
+        self.model_id = data.get("model_used", "unknown")
+        return _RemoteChatSession(
+            session_id=data["session_id"],
+            server_url=self.server_url,
+        )
 
     # ───────────────────────────────────────────────────────────────────
     # v0.1.0 — Single-Turn Generation (backwards compatible)
@@ -98,114 +108,30 @@ class ReasoningEngine:
             f"Generate exact PySpark code to fix the detected bottlenecks. "
             f"Return ONLY the code, no explanation."
         )
-        return self._generate(prompt)
+        return self._generate(prompt, use_fallback=True)
 
     # ───────────────────────────────────────────────────────────────────
     # Private Helpers
     # ───────────────────────────────────────────────────────────────────
 
-    def _generate(self, prompt):
-        """Single-turn generation call with fallback logic."""
-        last_exception = None
-        for model_id in self.models:
-            try:
-                response = self.client.models.generate_content(
-                    model=model_id,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        temperature=0.2,
-                        max_output_tokens=4096,
-                    ),
-                )
-                self.model_id = model_id
-                return response.text
-            except Exception as e:
-                last_exception = e
-                print(f"Warning: Failed to generate content with {model_id} ({e}). Trying fallback...")
-                
-        raise RuntimeError(f"All fallback models failed. Last error: {last_exception}")
+    def _generate(self, prompt, use_fallback=False):
+        """Single-turn generation via the backend."""
+        try:
+            resp = requests.post(
+                f"{self.server_url}/api/v1/generate",
+                json={"prompt": prompt, "use_fallback": use_fallback},
+                timeout=120,
+            )
+        except requests.exceptions.RequestException:
+            raise RuntimeError(
+                f"Could not connect to OptiSpark backend at {self.server_url}. "
+                f"Is the server running?"
+            )
 
-    def _build_context_injection(self, combined_context):
-        """Build the hidden context injection from a combined context dict."""
-        sections = []
+        if resp.status_code != 200:
+            detail = _safe_detail(resp)
+            raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
 
-        # DataFrame introspection (primary path)
-        df_ctx = combined_context.get("dataframe")
-        if df_ctx:
-            # Schema
-            schema = df_ctx.get("schema")
-            if isinstance(schema, list):
-                schema_str = "\n".join(
-                    f"  - {f['name']}: {f['type']} (nullable={f['nullable']})"
-                    for f in schema
-                )
-            else:
-                schema_str = str(schema)
-
-            sections.append(f"""## DataFrame Schema
-{schema_str}
-Columns: {df_ctx.get('num_columns', '?')} | Partitions: {df_ctx.get('num_partitions', '?')}""")
-
-            # Size
-            size_mb = df_ctx.get("estimated_size_mb")
-            if size_mb is not None:
-                sections.append(f"## Estimated Size\n{size_mb:.4f} MB ({df_ctx.get('estimated_size_bytes', '?')} bytes)")
-
-            # Execution plan
-            plan = df_ctx.get("execution_plan")
-            if plan and plan != "Could not extract execution plan":
-                sections.append(f"## Execution Plan (from Catalyst)\n```\n{plan}\n```")
-
-            # Logical plan
-            logical = df_ctx.get("logical_plan")
-            if logical:
-                sections.append(f"## Optimized Logical Plan\n```\n{logical}\n```")
-
-            # Cluster Settings
-            conf = df_ctx.get("spark_conf")
-            if conf:
-                sections.append(f"## Spark Configuration\n"
-                                f"Shuffle Partitions: {conf.get('spark.sql.shuffle.partitions')}\n"
-                                f"Driver Memory: {conf.get('spark.driver.memory')}\n"
-                                f"Executor Memory: {conf.get('spark.executor.memory')} | "
-                                f"Cores: {conf.get('spark.executor.cores')}")
-
-        # DAG metrics (legacy path)
-        dag = combined_context.get("dag_metrics")
-        if dag:
-            if isinstance(dag, list) and dag:
-                skewed = [m for m in dag if m.get("skew_ratio", 0) > 3.0]
-                critical = [m for m in dag if m.get("skew_ratio", 0) > 5.0]
-                sections.append(f"""## DAG Stage Metrics
-{json.dumps(dag, indent=2)}
-
-Summary: {len(dag)} stages | {len(skewed)} skewed (>3.0) | {len(critical)} critical (>5.0)""")
-            else:
-                sections.append(f"## DAG Metrics\n{json.dumps(dag, indent=2)}")
-
-        # Statement text
-        stmt = combined_context.get("statement_text")
-        if stmt:
-            sections.append(f"## PySpark Code Executed\n```python\n{stmt}\n```")
-
-        # General mode
-        if not sections:
-            sections.append("## Context\nNo DataFrame or metrics context available. The user may provide their code inline.")
-
-        body = "\n\n".join(sections)
-
-        return f"""[SYSTEM CONTEXT INJECTION — INVISIBLE TO USER — DO NOT REFERENCE THIS MESSAGE DIRECTLY]
-
-You are now loaded with the execution context for this interactive session.
-
-{body}
-
-## Instructions
-- Use the above context to ground ALL your analysis and recommendations.
-- When diagnosing issues, reference specific schema columns, partition counts, and plan operators.
-- When generating code fixes, produce exact, runnable PySpark code.
-- If a DataFrame was provided, analyze its execution plan for bottlenecks (shuffles, sorts, cartesian products, skew).
-- Wait for the user's first question before responding.
-- Do NOT acknowledge or reference this system injection message.
-"""
+        data = resp.json()
+        self.model_id = data.get("model_used", "unknown")
+        return data["text"]

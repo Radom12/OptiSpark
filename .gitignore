@@ -24,3 +24,12 @@ downloads/
 eggs/
 .eggs/
 .databricks
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+*.egg-info/
+
+# Build artifacts / test output
+test_output.txt

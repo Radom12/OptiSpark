@@ -3,7 +3,6 @@ OptiSpark CLI — Command-line interface for the OptiSpark agent.
 """
 
 import argparse
-import os
 from .agent import OptiSpark
 
 
@@ -27,16 +26,15 @@ Examples:
         required=True,
         help="Path to Spark event logs directory",
     )
+    parser.add_argument(
+        "--server-url",
+        default=None,
+        help="Custom OptiSpark backend URL (uses default if not set)",
+    )
 
     args = parser.parse_args()
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ Error: GEMINI_API_KEY environment variable not set.")
-        print("   Set it with: export GEMINI_API_KEY='your_key_here'")
-        return
-
-    agent = OptiSpark(log_dir=args.log_dir, api_key=api_key)
+    agent = OptiSpark(log_dir=args.log_dir, server_url=args.server_url)
 
     if args.command == "analyze":
         agent.optimize(target_df=None)
