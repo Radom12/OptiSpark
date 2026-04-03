@@ -5,11 +5,18 @@ The client never touches the AI API directly.
 """
 
 import json
+import os
 import requests
 
 
-# Default backend URL — update this after deploying to Render
-DEFAULT_SERVER_URL = "https://optispark-api.onrender.com"
+# Server URL resolution order:
+# 1. Explicit server_url passed to constructor
+# 2. OPTISPARK_SERVER_URL environment variable
+# 3. Default production URL below
+DEFAULT_SERVER_URL = os.environ.get(
+    "OPTISPARK_SERVER_URL",
+    "https://optispark-api.onrender.com"  # Production
+)
 
 
 class _RemoteChatSession:

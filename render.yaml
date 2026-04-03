@@ -1,11 +1,26 @@
 services:
+  # ── Development ──
+  - type: web
+    name: optispark-dev
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    branch: dev
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in Render dashboard
+    healthCheckPath: /health
+    plan: free
+
+  # ── Production ──
   - type: web
     name: optispark-api
     runtime: docker
     dockerfilePath: ./server/Dockerfile
     dockerContext: ./server
+    branch: main
     envVars:
       - key: GEMINI_API_KEY
-        sync: false  # You will set this manually in Render dashboard
+        sync: false  # Set manually in Render dashboard
     healthCheckPath: /health
     plan: free
