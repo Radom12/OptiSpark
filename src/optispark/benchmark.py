@@ -48,16 +48,18 @@ def run_benchmark(original_df, generated_code_str):
         # 4. Execute the AI code
         # We wrap in try/except because LLM code might contain Catalyst errors
         try:
-            exec(generated_code_str.strip(), {}, local_env)
+            from optispark.safety import secure_exec
+            local_vars = {}
+            secure_exec(generated_code_str.strip(), local_env, local_vars)
         except Exception as exec_err:
             print(f" ✖ Failed")
             return {"status": "error", "message": f"AI Code Execution Failed: {str(exec_err)}"}
             
-        if "df_opt" not in local_env:
+        if "optimized_df" not in local_vars:
             print(f" ✖ Failed")
-            return {"status": "error", "message": "The generated code did not assign the result to 'df_opt'."}
+            return {"status": "error", "message": "The generated code did not assign the result to 'optimized_df'."}
             
-        df_opt = local_env["df_opt"]
+        df_opt = local_vars["optimized_df"]
         print(" ✔")
         
         # 5. Benchmark Fixed Execution

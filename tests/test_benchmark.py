@@ -21,7 +21,7 @@ def test_benchmark_success():
     mock_df, sampled = _make_mock_df(row_count=10)
 
     # Use simple assignment — works in exec sandbox with mocks
-    code = "df_opt = df"
+    code = "optimized_df = df"
     res = run_benchmark(mock_df, code)
 
     assert res["status"] == "success"
@@ -33,7 +33,7 @@ def test_benchmark_success():
 def test_benchmark_empty_df():
     mock_df, sampled = _make_mock_df(row_count=0)
 
-    res = run_benchmark(mock_df, "df_opt = df")
+    res = run_benchmark(mock_df, "optimized_df = df")
     assert res["status"] == "error"
     assert "Sampled DataFrame is empty" in res["message"]
 
@@ -42,7 +42,7 @@ def test_benchmark_execution_error():
     mock_df, sampled = _make_mock_df(row_count=10)
 
     # Code that will raise during exec
-    code = "df_opt = this_function_does_not_exist()"
+    code = "optimized_df = this_function_does_not_exist()"
     res = run_benchmark(mock_df, code)
 
     assert res["status"] == "error"
@@ -52,16 +52,16 @@ def test_benchmark_execution_error():
 def test_benchmark_no_df_opt():
     mock_df, sampled = _make_mock_df(row_count=10)
 
-    # Code that runs but doesn't assign to df_opt
+    # Code that runs but doesn't assign to optimized_df
     code = "some_other_df = df"
     res = run_benchmark(mock_df, code)
 
     assert res["status"] == "error"
-    assert "not assign the result to 'df_opt'" in res["message"]
+    assert "not assign the result to 'optimized_df'" in res["message"]
 
 
 def test_benchmark_total_failure():
     # Pass None to force the outer exception
-    res = run_benchmark(None, "df_opt = None")
+    res = run_benchmark(None, "optimized_df = None")
     assert res["status"] == "error"
     assert "Benchmark failed" in res["message"]

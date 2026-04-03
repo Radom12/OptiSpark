@@ -1,0 +1,52 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.2, pluggy-1.6.0 -- c:\Users\Abhyu\OneDrive\Desktop\OptiSpark\OptiSpark\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Abhyu\OneDrive\Desktop\OptiSpark\OptiSpark
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-7.1.0
+collecting ... collected 5 items
+
+tests/test_benchmark.py::test_benchmark_success FAILED                   [ 20%]
+tests/test_benchmark.py::test_benchmark_empty_df FAILED                  [ 40%]
+tests/test_benchmark.py::test_benchmark_execution_error FAILED           [ 60%]
+tests/test_benchmark.py::test_benchmark_no_df_opt FAILED                 [ 80%]
+tests/test_benchmark.py::test_benchmark_total_failure PASSED             [100%]
+
+================================== FAILURES ===================================
+___________________________ test_benchmark_success ____________________________
+tests\test_benchmark.py:27: in test_benchmark_success
+    assert res["status"] == "success"
+E   AssertionError: assert 'error' == 'success'
+E     
+E     - success
+E     + error
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+___________________________ test_benchmark_empty_df ___________________________
+tests\test_benchmark.py:38: in test_benchmark_empty_df
+    assert "Sampled DataFrame is empty" in res["message"]
+E   assert 'Sampled DataFrame is empty' in 'Benchmark failed: unsupported format string passed to MagicMock.__format__\nTraceback (most recent call last):\n  File "c:\\Users\\Abhyu\\OneDrive\\Desktop\\OptiSpark\\OptiSpark\\.venv\\Lib\\site-packages\\optispark\\benchmark.py", line 20, in run_benchmark\n    print(f" Γ£ö (Cached {baseline_rows:,} rows)")\n                       ^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to MagicMock.__format__\n'
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+_______________________ test_benchmark_execution_error ________________________
+tests\test_benchmark.py:49: in test_benchmark_execution_error
+    assert "AI Code Execution Failed" in res["message"]
+E   assert 'AI Code Execution Failed' in 'Benchmark failed: unsupported format string passed to MagicMock.__format__\nTraceback (most recent call last):\n  File "c:\\Users\\Abhyu\\OneDrive\\Desktop\\OptiSpark\\OptiSpark\\.venv\\Lib\\site-packages\\optispark\\benchmark.py", line 20, in run_benchmark\n    print(f" Γ£ö (Cached {baseline_rows:,} rows)")\n                       ^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to MagicMock.__format__\n'
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+__________________________ test_benchmark_no_df_opt ___________________________
+tests\test_benchmark.py:60: in test_benchmark_no_df_opt
+    assert "not assign the result to 'optimized_df'" in res["message"]
+E   assert "not assign the result to 'optimized_df'" in 'Benchmark failed: unsupported format string passed to MagicMock.__format__\nTraceback (most recent call last):\n  File "c:\\Users\\Abhyu\\OneDrive\\Desktop\\OptiSpark\\OptiSpark\\.venv\\Lib\\site-packages\\optispark\\benchmark.py", line 20, in run_benchmark\n    print(f" Γ£ö (Cached {baseline_rows:,} rows)")\n                       ^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to MagicMock.__format__\n'
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+=========================== short test summary info ===========================
+FAILED tests/test_benchmark.py::test_benchmark_success - AssertionError: asse...
+FAILED tests/test_benchmark.py::test_benchmark_empty_df - assert 'Sampled Dat...
+FAILED tests/test_benchmark.py::test_benchmark_execution_error - assert 'AI C...
+FAILED tests/test_benchmark.py::test_benchmark_no_df_opt - assert "not assign...
+========================= 4 failed, 1 passed in 1.04s =========================

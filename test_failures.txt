@@ -1,0 +1,97 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.13.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\Abhyu\OneDrive\Desktop\OptiSpark\OptiSpark
+configfile: pyproject.toml
+plugins: anyio-4.13.0, cov-7.1.0
+collected 61 items
+
+tests\test_agent.py ................                                     [ 26%]
+tests\test_agent_ui.py ..                                                [ 29%]
+tests\test_benchmark.py FFFF.                                            [ 37%]
+tests\test_cli.py ...                                                    [ 42%]
+tests\test_listener.py .                                                 [ 44%]
+tests\test_parser.py ......                                              [ 54%]
+tests\test_reasoning.py ..........                                       [ 70%]
+tests\test_safety.py .....                                               [ 78%]
+tests\test_server.py .............                                       [100%]
+
+================================== FAILURES ===================================
+___________________________ test_benchmark_success ____________________________
+
+    def test_benchmark_success():
+        mock_df, sampled = _make_mock_df(row_count=10)
+    
+        # Use simple assignment ΓÇö works in exec sandbox with mocks
+        code = "optimized_df = df"
+        res = run_benchmark(mock_df, code)
+    
+>       assert res["status"] == "success"
+E       AssertionError: assert 'error' == 'success'
+E         
+E         - success
+E         + error
+
+tests\test_benchmark.py:27: AssertionError
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+___________________________ test_benchmark_empty_df ___________________________
+
+    def test_benchmark_empty_df():
+        mock_df, sampled = _make_mock_df(row_count=0)
+    
+        res = run_benchmark(mock_df, "optimized_df = df")
+        assert res["status"] == "error"
+>       assert "Sampled DataFrame is empty" in res["message"]
+E       assert 'Sampled DataFrame is empty' in 'Benchmark failed: unsupported format string passed to MagicMock.__format__\nTraceback (most recent call last):\n  Fil...ws)")\n                       ^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to MagicMock.__format__\n'
+
+tests\test_benchmark.py:38: AssertionError
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+_______________________ test_benchmark_execution_error ________________________
+
+    def test_benchmark_execution_error():
+        mock_df, sampled = _make_mock_df(row_count=10)
+    
+        # Code that will raise during exec
+        code = "optimized_df = this_function_does_not_exist()"
+        res = run_benchmark(mock_df, code)
+    
+        assert res["status"] == "error"
+>       assert "AI Code Execution Failed" in res["message"]
+E       assert 'AI Code Execution Failed' in 'Benchmark failed: unsupported format string passed to MagicMock.__format__\nTraceback (most recent call last):\n  Fil...ws)")\n                       ^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to MagicMock.__format__\n'
+
+tests\test_benchmark.py:49: AssertionError
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+__________________________ test_benchmark_no_df_opt ___________________________
+
+    def test_benchmark_no_df_opt():
+        mock_df, sampled = _make_mock_df(row_count=10)
+    
+        # Code that runs but doesn't assign to optimized_df
+        code = "some_other_df = df"
+        res = run_benchmark(mock_df, code)
+    
+        assert res["status"] == "error"
+>       assert "not assign the result to 'optimized_df'" in res["message"]
+E       assert "not assign the result to 'optimized_df'" in 'Benchmark failed: unsupported format string passed to MagicMock.__format__\nTraceback (most recent call last):\n  Fil...ws)")\n                       ^^^^^^^^^^^^^^^^^\nTypeError: unsupported format string passed to MagicMock.__format__\n'
+
+tests\test_benchmark.py:60: AssertionError
+---------------------------- Captured stdout call -----------------------------
+  ΓÅ│ Preparing 0.1% data sample for benchmark...
+     (ΓÜá∩╕Å Warning: Measuring the skewed baseline plan may take a minute...)
+============================== warnings summary ===============================
+server\main.py:115
+  C:\Users\Abhyu\OneDrive\Desktop\OptiSpark\OptiSpark\server\main.py:115: UserWarning: CORS_ALLOWED_ORIGINS is not set; all cross-origin browser requests will be blocked. Set CORS_ALLOWED_ORIGINS to a comma-separated list of trusted origins.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_benchmark.py::test_benchmark_success - AssertionError: asse...
+FAILED tests/test_benchmark.py::test_benchmark_empty_df - assert 'Sampled Dat...
+FAILED tests/test_benchmark.py::test_benchmark_execution_error - assert 'AI C...
+FAILED tests/test_benchmark.py::test_benchmark_no_df_opt - assert "not assign...
+=================== 4 failed, 57 passed, 1 warning in 2.93s ===================

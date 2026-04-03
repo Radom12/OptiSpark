@@ -11,7 +11,8 @@ from datetime import datetime
 
 from .reasoning import ReasoningEngine
 from .parser import extract_features_from_logs, extract_features_from_system_tables
-from .safety import validate_safety
+from .safety import validate_safety, secure_exec
+from pyspark.sql.utils import AnalysisException
 
 
 # ─── ANSI Color Palette ──────────────────────────────────────────────────────
@@ -246,7 +247,7 @@ class OptiSpark:
                 # Auto-Execute Sandbox (v0.3.0)
                 if df is not None:
                     for block in blocks:
-                        if "df_opt" in block:
+                        if "optimized_df" in block:
                             print(f"\n  {C.YELLOW}{C.BOLD}⚡ OptiSpark generated an executable fix.{C.RESET}")
                             confirm = input(f"  {C.BLUE}❯ Apply this code to your DataFrame? [y/N]: {C.RESET}").strip().lower()
                             if confirm == 'y':
@@ -261,7 +262,7 @@ class OptiSpark:
                 _print_error(str(e))
 
         # Return the optimized DataFrame, or fallback to the original
-        return session_state.get("df_opt", df)
+        return session_state.get("optimized_df", df)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Private Helpers
@@ -427,18 +428,57 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
         try:
             sandbox_env = _build_sandbox_env(df, spark, kwargs)
             sandbox_env["__builtins__"] = __builtins__
-            exec(code_block.strip(), sandbox_env, sandbox_env)
+            local_vars = {}
+            secure_exec(code_block.strip(), sandbox_env, local_vars)
 
-            if "df_opt" in sandbox_env:
-                session_state["df_opt"] = sandbox_env["df_opt"]
+            if "optimized_df" in local_vars:
+                session_state["optimized_df"] = local_vars["optimized_df"]
                 print(f" {C.GREEN}✔ Success!{C.RESET}")
                 print(f"  {C.GRAY}├─ The optimized DataFrame is now active in this chat session.{C.RESET}")
                 print(f"  {C.GRAY}└─ It will be returned when you type 'exit'.{C.RESET}")
-                return sandbox_env["df_opt"]
+                return local_vars["optimized_df"]
             else:
-                print(f" {C.RED}✖ Error: The code executed but did not assign 'df_opt'.{C.RESET}")
+                print(f" {C.RED}✖ Error: The code executed but did not assign 'optimized_df'.{C.RESET}")
                 return df
 
+        except AnalysisException as ex:
+            ex_str = str(ex)
+            print(f" {C.RED}✖ AnalysisException (attempt {attempt + 1}/{max_retries}){C.RESET}")
+            print(f"  {C.RED}Error: {ex_str}{C.RESET}")
+            
+            if chat_session and attempt < max_retries - 1:
+                print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
+                
+                if "ambiguous" in ex_str.lower():
+                    error_prompt = (
+                        f"The code you provided failed with an AnalysisException:\n```\n{ex_str}\n```\n"
+                        f"You must resolve the ambiguous columns by rewriting the join logic. "
+                        f"Use `.alias()` on the DataFrames and explicitly reference the aliases in the join condition. "
+                        f"Output a new python block assigning the result to `optimized_df`."
+                    )
+                else:
+                    error_prompt = (
+                        f"The code you provided failed with an AnalysisException:\n```\n{ex_str}\n```\n"
+                        f"Please fix the code and output a new python block assigning the result to `optimized_df`."
+                    )
+                    
+                session_state["message_count"] += 1
+                _print_thinking()
+                try:
+                    correction = chat_session.send_message(error_prompt)
+                    _print_response(correction.text, session_state["message_count"])
+                    # Extract corrected code block and retry
+                    corrected_blocks = re.findall(r"```python\n(.*?)```", correction.text, re.DOTALL)
+                    if corrected_blocks:
+                        code_block = corrected_blocks[0]
+                        session_state["last_code"] = code_block
+                        continue
+                except Exception:
+                    pass
+
+            print(f"  {C.YELLOW}⚠ Could not auto-fix. You can ask the agent to try a different approach.{C.RESET}")
+            return df
+            
         except Exception as ex:
             print(f" {C.RED}✖ Execution Failed (attempt {attempt + 1}/{max_retries}){C.RESET}")
             print(f"  {C.RED}Error: {str(ex)}{C.RESET}")
@@ -447,7 +487,7 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
                 print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
                 error_prompt = (
                     f"The code you provided failed with this error:\n```\n{str(ex)}\n```\n"
-                    f"Please fix the code and output a new python block assigning the result to `df_opt`."
+                    f"Please fix the code and output a new python block assigning the result to `optimized_df`."
                 )
                 session_state["message_count"] += 1
                 _print_thinking()
