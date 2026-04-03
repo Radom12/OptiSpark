@@ -105,7 +105,7 @@ class OptiSpark:
     # v0.2.0 — Interactive REPL Chat
     # ═══════════════════════════════════════════════════════════════════════
 
-    def chat(self, df=None, spark=None, query_id=None):
+    def chat(self, df=None, spark=None, query_id=None, **kwargs):
         """Launch the interactive OptiSpark REPL agent.
 
         Pass the DataFrame you're having trouble with — the agent will
@@ -116,6 +116,7 @@ class OptiSpark:
             df: The PySpark DataFrame you want the agent to analyze and fix.
             spark: (Optional) Active SparkSession — inferred from df if not provided.
             query_id: (Optional, legacy) Databricks query ID for system table lookup.
+            kwargs: (Optional) Any upstream DataFrames or variables (e.g. users=users_df) that the agent might need to rebuild the pipeline.
         """
         _print_banner()
 
@@ -255,8 +256,11 @@ class OptiSpark:
                                     import pyspark.sql.functions as F
                                     from pyspark.sql import Window
                                     
-                                    # Provide secure local environment with standard PySpark aliases
-                                    local_env = {"df": df, "spark": df.sparkSession, "F": F, "Window": Window}
+                                    # Provide secure local environment with standard PySpark aliases and upstream dataframes
+                                    spark_session = df.sparkSession if df is not None else spark
+                                    local_env = {"df": df, "spark": spark_session, "F": F, "Window": Window}
+                                    if kwargs:
+                                        local_env.update(kwargs)
                                     exec(block.strip(), {}, local_env)
                                     
                                     if "df_opt" in local_env:
@@ -353,6 +357,12 @@ class OptiSpark:
             context["logical_plan"] = df._jdf.queryExecution().optimizedPlan().toString()
         except Exception:
             context["logical_plan"] = None
+            
+        # Parsed (original) logical plan - helps model see the original pipeline operations
+        try:
+            context["parsed_logical_plan"] = df._jdf.queryExecution().logical().toString()
+        except Exception:
+            context["parsed_logical_plan"] = None
 
         # Spark cluster configuration and capacity
         try:
