@@ -20,8 +20,10 @@ ______________ coverage: platform win32, python 3.13.12-final-0 _______________
 
 Name                         Stmts   Miss  Cover   Missing
 ----------------------------------------------------------
+server\__init__.py               0      0   100%
+server\main.py                 134      6    96%   30, 86-90
 src\optispark\__init__.py        3      0   100%
-src\optispark\agent.py         397     21    95%   151-152, 158, 218-219, 269, 327, 370-372, 376-385, 518-519, 531-532
+src\optispark\agent.py         397     23    94%   151-152, 158, 206, 212, 218-219, 269, 327, 370-372, 376-385, 518-519, 531-532
 src\optispark\benchmark.py      44      1    98%   70
 src\optispark\cli.py            15      1    93%   46
 src\optispark\listener.py       25      1    96%   27
@@ -29,8 +31,6 @@ src\optispark\parser.py         82      2    98%   14, 51
 src\optispark\reasoning.py      49      0   100%
 src\optispark\safety.py         14      0   100%
 ----------------------------------------------------------
-TOTAL                          629     26    96%
-============================= 61 passed in 18.56s =============================
-SUCCESS: The process with PID 20692 (child process of PID 8916) has been terminated.
-SUCCESS: The process with PID 8916 (child process of PID 23332) has been terminated.
-SUCCESS: The process with PID 23332 (child process of PID 15580) has been terminated.
+TOTAL                          763     34    96%
+Required test coverage of 90% reached. Total coverage: 95.54%
+============================= 61 passed in 4.38s ==============================
