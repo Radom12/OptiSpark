@@ -18,8 +18,17 @@ def _safe_detail(resp: requests.Response) -> str:
 
 
 def _make_request_with_retry(url, json_payload, max_retries=3, timeout=120):
-    """Helper to send HTTP POST requests with exponential backoff on connection errors."""
+    """Helper to send HTTP POST requests with exponential backoff on connection errors.
+
+    Retries up to *max_retries* times.  Between attempts the function sleeps for
+    ``2 ** attempt`` seconds (1 s, 2 s, 4 s, …) so the back-off doubles on each
+    failure.  *max_retries* must be at least 1.
+    """
     import time
+
+    if max_retries < 1:
+        raise ValueError("max_retries must be >= 1")
+
     for attempt in range(max_retries):
         try:
             resp = requests.post(
@@ -28,17 +37,19 @@ def _make_request_with_retry(url, json_payload, max_retries=3, timeout=120):
                 timeout=timeout,
             )
             break
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as exc:
             if attempt < max_retries - 1:
-                wait = 5 * (attempt + 1)
+                wait = 2 ** attempt
                 time.sleep(wait)
             else:
-                raise RuntimeError(f"Could not connect to OptiSpark backend at {url}. Is the server running?")
+                raise RuntimeError(
+                    f"Could not connect to OptiSpark backend at {url}. Is the server running?"
+                ) from exc
 
     if resp.status_code != 200:
         detail = _safe_detail(resp)
         raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
-        
+
     return resp
 
 
