@@ -72,3 +72,15 @@ src/optispark/
 ├── listener.py    # Real-time Spark listener for task metrics
 └── cli.py         # CLI entry point
 ```
+
+
+## Known Limitations (V1 Architecture)
+```
+OptiSpark is currently in version 0.2.0. While the PySpark execution and AST safety layers are highly robust, the FastAPI backend has a few architectural limitations designed for rapid prototyping rather than massive horizontal scale:
+
+1. **In-Memory Session State:** The backend stores active LLM chat sessions in a global Python dictionary (`chat_sessions`). This means the API currently requires a single-worker deployment. If scaled horizontally across multiple workers, sessions will not be shared, resulting in `404 Session not found` errors. 
+2. **Ephemeral Hosting (Render Free Tier):** If deploying the backend on free-tier services (like Render) that spin down after inactivity, all active chat sessions will be permanently lost during a cold start due to the in-memory state architecture.
+3. **Synchronous Endpoints:** The V1 API endpoints are synchronous, which relies on FastAPI's external threadpool. Under extremely high concurrent load, this could lead to thread exhaustion.
+
+**Future Scaling:** V2 of the backend will introduce an external state store (e.g., Redis) to cache LLM context and session history, allowing for fully stateless API workers and seamless horizontal scaling.
+```
