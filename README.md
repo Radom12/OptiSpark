@@ -7,7 +7,7 @@ OptiSpark is an agentic tool that monitors Spark execution, identifies performan
 - 🔍 **Hybrid Extraction**: Supports Standard clusters (EventLogs) and Databricks Serverless (System Tables).
 - 🧠 **LLM-Powered Reasoning**: Uses Gemini Flash to diagnose root causes and generate exact PySpark fixes.
 - 🛡️ **Catalyst Safety Layer**: Programmatically validates AI-generated code against DataFrame metadata to prevent OOMs.
-- 🔒 **AST Execution Blockers**: Static code parsing to prevent data-altering commands (`.write`, `.drop()`, SQL DDL/DML).
+- 🔒 **AST Execution Blockers**: Static code parsing to prevent data-altering calls (for example, `.save()`, `.saveAsTable()`, `.insertInto()`, `.drop()`, and SQL DDL/DML).
 - 🔄 **Catalyst Auto-Healing**: Recursively catches missing column issues or `AnalysisException`s natively to self-correct generated pipelines without human input.
 - 💬 **Interactive REPL Agent** *(v0.2.0)*: Chat with OptiSpark in your notebook — ask questions, get context-aware fixes.
 
