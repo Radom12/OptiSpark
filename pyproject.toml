@@ -8,14 +8,18 @@ version = "0.2.0"
 authors = [
   { name="Abhyudith M Bharadhwaj", email="abhyudith@gmail.com" },
 ]
-description = "An autonomous, agentic optimization layer for PySpark DataFrames."
+description = "An autonomous copilot for PySpark optimization — diagnoses bottlenecks and generates safe, executable fixes."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.9"
+keywords = ["pyspark", "spark", "optimization", "llm", "agent", "catalyst", "performance"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Intended Audience :: Developers",
+    "Topic :: Database",
 ]
 dependencies = [
     "pyspark>=3.0.0",
@@ -26,7 +30,8 @@ dependencies = [
 
 [project.urls]
 "Homepage" = "https://github.com/Radom12/OptiSpark"
-"Bug Tracker" = "https://github.com/Radom12/OptiSparkissues"
+"Bug Tracker" = "https://github.com/Radom12/OptiSpark/issues"
+"Source" = "https://github.com/Radom12/OptiSpark"
 
 [project.scripts]
 optispark = "optispark.cli:main"
