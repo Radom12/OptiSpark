@@ -115,7 +115,7 @@ OptiSpark(log_dir=None, server_url=None)
 ## Installation
 
 ```bash
-pip install git+https://github.com/Radom12/OptiSpark.git
+pip install optispark
 ```
 
 **Requirements**: Python ≥ 3.9, PySpark ≥ 3.0
