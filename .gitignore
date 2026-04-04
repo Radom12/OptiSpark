@@ -34,12 +34,13 @@ htmlcov/
 # Build artifacts / test output
 test_output.txt
 test_results.txt
-<<<<<<< Updated upstream
-mock.py
-mock2.py
-=======
+test_failures.txt
+err.txt
 
 # Local demo scripts
 demo.py
 mock*.py
->>>>>>> Stashed changes
+e2e_nightmare_pipeline.py
+test_inputs.txt
+run_output.txt
+nightmare_log.txt
