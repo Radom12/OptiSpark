@@ -2,6 +2,10 @@ import ast
 import re
 
 class ReadOnlyValidator(ast.NodeVisitor):
+    """
+    AST Walker that blocks destructive DataFrame methods and SQL commands.
+    Used to defensively parse LLM code before it hits the Python interpreter.
+    """
     def __init__(self):
         self.destructive_methods = {'write', 'save', 'saveAsTable', 'insertInto', 'drop', 'delete', 'truncate'}
         self.destructive_sql = re.compile(r'\b(DROP|DELETE|TRUNCATE|INSERT|UPDATE|CREATE)\b', re.IGNORECASE)
