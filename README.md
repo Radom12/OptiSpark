@@ -23,7 +23,7 @@ OptiSpark isn't just an LLM wrapper; it tightly integrates with PySpark's intern
 ```python
 from optispark import OptiSpark
 
-agent = OptiSpark(api_key="your_gemini_key")
+agent = OptiSpark()
 agent.optimize(spark=spark, query_id="your_query_id", target_df=your_df)
 ```
 
@@ -31,7 +31,7 @@ agent.optimize(spark=spark, query_id="your_query_id", target_df=your_df)
 ```python
 from optispark import OptiSpark
 
-agent = OptiSpark(api_key="your_gemini_key")
+agent = OptiSpark()
 
 # Just pass the DataFrame you're having trouble with!
 agent.chat(df=my_problematic_df)
@@ -47,9 +47,6 @@ agent.chat(df=my_problematic_df)
 
 ### CLI Usage
 ```bash
-# Set your API key
-export GEMINI_API_KEY="your_key"
-
 # One-shot analysis
 optispark analyze --log-dir /path/to/spark/logs
 
