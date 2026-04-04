@@ -72,6 +72,3 @@ src/optispark/
 ├── listener.py    # Real-time Spark listener for task metrics
 └── cli.py         # CLI entry point
 ```
-
-## License
-MIT
