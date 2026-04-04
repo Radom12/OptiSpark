@@ -17,6 +17,32 @@ def _safe_detail(resp: requests.Response) -> str:
         return resp.text
 
 
+def _make_request_with_retry(url, json_payload, max_retries=3, timeout=120):
+    """Helper to send HTTP POST requests with exponential backoff on connection errors."""
+    import time
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(
+                url,
+                json=json_payload,
+                timeout=timeout,
+            )
+            break
+        except requests.exceptions.RequestException:
+            if attempt < max_retries - 1:
+                wait = 5 * (attempt + 1)
+                time.sleep(wait)
+            else:
+                raise RuntimeError(f"Could not connect to OptiSpark backend at {url}. Is the server running?")
+
+    if resp.status_code != 200:
+        detail = _safe_detail(resp)
+        raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
+        
+    return resp
+
+
+
 # Server URL resolution order:
 # 1. Explicit server_url passed to constructor
 # 2. OPTISPARK_SERVER_URL environment variable
@@ -36,27 +62,12 @@ class _RemoteChatSession:
 
     def send_message(self, message: str):
         """Send a message and return an object with a .text attribute."""
-        import time as _time
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                resp = requests.post(
-                    f"{self.server_url}/api/v1/chat/message",
-                    json={"session_id": self.session_id, "message": message},
-                    timeout=120,
-                )
-                break
-            except requests.exceptions.RequestException:
-                if attempt < max_retries - 1:
-                    wait = 5 * (attempt + 1)
-                    _time.sleep(wait)
-                else:
-                    raise RuntimeError("Lost connection to OptiSpark backend.")
-
-        if resp.status_code != 200:
-            detail = _safe_detail(resp)
-            raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
+        resp = _make_request_with_retry(
+            url=f"{self.server_url}/api/v1/chat/message",
+            json_payload={"session_id": self.session_id, "message": message},
+            max_retries=3,
+            timeout=120
+        )
 
         data = resp.json()
 
@@ -80,31 +91,12 @@ class ReasoningEngine:
 
     def start_chat(self, combined_context):
         """Start a chat session on the backend, returns a RemoteChatSession."""
-        import time as _time
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                resp = requests.post(
-                    f"{self.server_url}/api/v1/chat/start",
-                    json={"combined_context": combined_context},
-                    timeout=180,
-                )
-                break
-            except requests.exceptions.RequestException:
-                if attempt < max_retries - 1:
-                    wait = 10 * (attempt + 1)
-                    print(f"\n  ⚠ Server waking up... retrying in {wait}s ({attempt + 1}/{max_retries})")
-                    _time.sleep(wait)
-                else:
-                    raise RuntimeError(
-                        f"Could not connect to OptiSpark backend at {self.server_url}. "
-                        f"Is the server running?"
-                    )
-
-        if resp.status_code != 200:
-            detail = _safe_detail(resp)
-            raise RuntimeError(f"Backend error ({resp.status_code}): {detail}")
+        resp = _make_request_with_retry(
+            url=f"{self.server_url}/api/v1/chat/start",
+            json_payload={"combined_context": combined_context},
+            max_retries=3,
+            timeout=180
+        )
 
         data = resp.json()
         self.model_id = data.get("model_used", "unknown")

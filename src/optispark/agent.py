@@ -240,7 +240,7 @@ class OptiSpark:
                 _print_response(response.text, session_state["message_count"])
 
                 # Extract python blocks globally for benchmarking
-                blocks = re.findall(r"```python\n(.*?)```", response.text, re.DOTALL)
+                blocks = _extract_python_blocks(response.text)
                 if blocks:
                     session_state["last_code"] = blocks[-1]
 
@@ -418,6 +418,11 @@ def _build_sandbox_env(df, spark, kwargs):
     return env
 
 
+def _extract_python_blocks(text):
+    """Extract python code blocks from an LLM response."""
+    return re.findall(r"```python\n(.*?)```", text, re.DOTALL)
+
+
 def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=None, max_retries=3):
     """Execute a code block in a sandboxed environment with self-healing retries.
 
@@ -441,14 +446,12 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
                 print(f" {C.RED}✖ Error: The code executed but did not assign 'optimized_df'.{C.RESET}")
                 return df
 
-        except AnalysisException as ex:
+        except Exception as ex:
             ex_str = str(ex)
-            print(f" {C.RED}✖ AnalysisException (attempt {attempt + 1}/{max_retries}){C.RESET}")
-            print(f"  {C.RED}Error: {ex_str}{C.RESET}")
             
-            if chat_session and attempt < max_retries - 1:
-                print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
-                
+            if isinstance(ex, AnalysisException):
+                print(f" {C.RED}✖ AnalysisException (attempt {attempt + 1}/{max_retries}){C.RESET}")
+                print(f"  {C.RED}Error: {ex_str}{C.RESET}")
                 if "ambiguous" in ex_str.lower():
                     error_prompt = (
                         f"The code you provided failed with an AnalysisException:\n```\n{ex_str}\n```\n"
@@ -461,41 +464,24 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
                         f"The code you provided failed with an AnalysisException:\n```\n{ex_str}\n```\n"
                         f"Please fix the code and output a new python block assigning the result to `optimized_df`."
                     )
-                    
-                session_state["message_count"] += 1
-                _print_thinking()
-                try:
-                    correction = chat_session.send_message(error_prompt)
-                    _print_response(correction.text, session_state["message_count"])
-                    # Extract corrected code block and retry
-                    corrected_blocks = re.findall(r"```python\n(.*?)```", correction.text, re.DOTALL)
-                    if corrected_blocks:
-                        code_block = corrected_blocks[0]
-                        session_state["last_code"] = code_block
-                        continue
-                except Exception:
-                    pass
-
-            print(f"  {C.YELLOW}⚠ Could not auto-fix. You can ask the agent to try a different approach.{C.RESET}")
-            return df
-            
-        except Exception as ex:
-            print(f" {C.RED}✖ Execution Failed (attempt {attempt + 1}/{max_retries}){C.RESET}")
-            print(f"  {C.RED}Error: {str(ex)}{C.RESET}")
+            else:
+                print(f" {C.RED}✖ Execution Failed (attempt {attempt + 1}/{max_retries}){C.RESET}")
+                print(f"  {C.RED}Error: {ex_str}{C.RESET}")
+                error_prompt = (
+                    f"The code you provided failed with this error:\n```\n{ex_str}\n```\n"
+                    f"Please fix the code and output a new python block assigning the result to `optimized_df`."
+                )
 
             if chat_session and attempt < max_retries - 1:
                 print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
-                error_prompt = (
-                    f"The code you provided failed with this error:\n```\n{str(ex)}\n```\n"
-                    f"Please fix the code and output a new python block assigning the result to `optimized_df`."
-                )
                 session_state["message_count"] += 1
                 _print_thinking()
                 try:
                     correction = chat_session.send_message(error_prompt)
                     _print_response(correction.text, session_state["message_count"])
+                    
                     # Extract corrected code block and retry
-                    corrected_blocks = re.findall(r"```python\n(.*?)```", correction.text, re.DOTALL)
+                    corrected_blocks = _extract_python_blocks(correction.text)
                     if corrected_blocks:
                         code_block = corrected_blocks[0]
                         session_state["last_code"] = code_block
