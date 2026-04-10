@@ -39,11 +39,34 @@ def secure_exec(generated_code, global_vars, local_vars):
     exec(generated_code, global_vars, local_vars)
 
 
+def _code_contains_explode_or_salt(code: str) -> bool:
+    """AST-based check for explode() or salt_array usage in generated code.
+    
+    Replaces the brittle `"F.explode" in code` string search with a proper
+    syntax-tree walk that catches aliased imports and avoids false positives
+    on comments or string literals.
+    """
+    try:
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            # Catch F.explode(), F.explode_outer(), F.posexplode(), etc.
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr in ("explode", "explode_outer", "posexplode"):
+                    return True
+            # Catch bare variable named salt_array
+            if isinstance(node, ast.Name) and node.id == "salt_array":
+                return True
+        return False
+    except SyntaxError:
+        # Fallback: if code can't be parsed, use conservative string check
+        return "explode" in code or "salt_array" in code
+
+
 def validate_safety(code, target_df, max_safe_size_mb=50):
     """Validates AI-generated code against cluster safety constraints."""
     print("🛡️ [3/4] Running safety checks...")
     
-    if "F.explode" in code or "salt_array" in code:
+    if _code_contains_explode_or_salt(code):
         if target_df is None:
             return False, "Dangerous operation detected, but no target_df provided for size validation."
             

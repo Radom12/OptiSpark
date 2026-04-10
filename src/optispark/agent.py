@@ -12,6 +12,7 @@ from datetime import datetime
 from .reasoning import ReasoningEngine
 from .parser import extract_features_from_logs, extract_features_from_system_tables
 from .safety import validate_safety, secure_exec
+from .plan_analyzer import parse_plan, analyze_plan
 from pyspark.sql.utils import AnalysisException
 
 
@@ -337,16 +338,32 @@ class OptiSpark:
             context["parsed_logical_plan"] = None
 
         # Spark cluster configuration and capacity
+        broadcast_threshold_bytes = 10 * 1024 * 1024  # Spark default: 10 MB
         try:
             spark = df.sparkSession
+            raw_threshold = spark.conf.get("spark.sql.autoBroadcastJoinThreshold", "10485760")
+            broadcast_threshold_bytes = int(raw_threshold)
             context["spark_conf"] = {
                 "spark.sql.shuffle.partitions": spark.conf.get("spark.sql.shuffle.partitions", "default"),
+                "spark.sql.autoBroadcastJoinThreshold": str(broadcast_threshold_bytes),
                 "spark.driver.memory": spark.conf.get("spark.driver.memory", "default"),
                 "spark.executor.memory": spark.conf.get("spark.executor.memory", "default"),
                 "spark.executor.cores": spark.conf.get("spark.executor.cores", "default"),
             }
         except Exception:
             context["spark_conf"] = None
+
+        # Structured plan analysis — parse execution plan into typed nodes and run rules
+        try:
+            plan_text = context.get("execution_plan", "")
+            if plan_text and plan_text != "Could not extract execution plan":
+                plan_nodes = parse_plan(plan_text)
+                diagnostics = analyze_plan(plan_nodes, broadcast_threshold_bytes=broadcast_threshold_bytes)
+                context["plan_diagnostics"] = [d.to_dict() for d in diagnostics]
+            else:
+                context["plan_diagnostics"] = None
+        except Exception:
+            context["plan_diagnostics"] = None
 
         return context
 
