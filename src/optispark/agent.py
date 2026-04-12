@@ -463,6 +463,26 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
 
             if "optimized_df" not in local_vars:
                 print(f" {C.RED}✖ Error: The code executed but did not assign 'optimized_df'.{C.RESET}")
+                if chat_session and attempt < max_retries - 1:
+                    error_prompt = (
+                        "The code you provided executed without errors but did not assign "
+                        "a value to `optimized_df`.  Please rewrite the code so that the "
+                        "final result is assigned to `optimized_df`."
+                    )
+                    print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
+                    session_state["message_count"] += 1
+                    _print_thinking()
+                    try:
+                        correction = chat_session.send_message(error_prompt)
+                        _print_response(correction.text, session_state["message_count"])
+                        corrected_blocks = _extract_python_blocks(correction.text)
+                        if corrected_blocks:
+                            code_block = corrected_blocks[0]
+                            session_state["last_code"] = code_block
+                            continue
+                    except Exception:
+                        pass
+                print(f"  {C.YELLOW}⚠ Could not auto-fix. You can ask the agent to try a different approach.{C.RESET}")
                 return df
 
             optimized_df = local_vars["optimized_df"]

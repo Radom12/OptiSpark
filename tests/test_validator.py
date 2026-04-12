@@ -40,11 +40,11 @@ def _make_mock_df(fields, row_count=3, rows=None):
     limited.count.return_value = row_count
     limited.collect.return_value = [MagicMock(**{"asDict.return_value": r}) for r in (rows or [])]
 
-    # subtract() returns a mock with count() and limit().collect()
-    empty_subtract = MagicMock()
-    empty_subtract.count.return_value = 0
-    empty_subtract.limit.return_value.collect.return_value = []
-    limited.subtract.return_value = empty_subtract
+    # exceptAll() returns a mock with count() and limit().collect()
+    empty_exceptall = MagicMock()
+    empty_exceptall.count.return_value = 0
+    empty_exceptall.limit.return_value.collect.return_value = []
+    limited.exceptAll.return_value = empty_exceptall
 
     df.limit.return_value = limited
 
@@ -52,10 +52,6 @@ def _make_mock_df(fields, row_count=3, rows=None):
     agg_row = MagicMock()
     if rows:
         # Compute sums from the given rows
-        for n, t in fields:
-            if isinstance(t, (T.IntegerType, T.LongType, T.FloatType, T.DoubleType)):
-                total = sum(r.get(n, 0) for r in rows if r.get(n) is not None)
-                agg_row.__getitem__ = lambda self, key, _n=n, _t=total: _t if key == _n else 0
         agg_row.__getitem__ = MagicMock(side_effect=lambda key: sum(r.get(key, 0) for r in rows if r.get(key) is not None))
     limited.agg.return_value.collect.return_value = [agg_row]
 
@@ -172,6 +168,15 @@ class TestRowCountCheck:
         assert result["passed"] is True
         assert "100" in result["detail"]
 
+    def test_both_at_sample_limit_passes_with_caveat(self):
+        """When both counts equal sample_size the message reflects uncertainty."""
+        df1 = _make_mock_df([("id", T.IntegerType())], row_count=500)
+        df2 = _make_mock_df([("id", T.IntegerType())], row_count=500)
+        result = _check_row_count(df1, df2, sample_size=500)
+        assert result["passed"] is True
+        assert "at least" in result["detail"]
+        assert "500" in result["detail"]
+
     def test_mismatched_count(self):
         df1 = _make_mock_df([("id", T.IntegerType())], row_count=100)
         df2 = _make_mock_df([("id", T.IntegerType())], row_count=50)
@@ -214,14 +219,14 @@ class TestDataIntegrityCheck:
         row_mock = MagicMock()
         row_mock.asDict.return_value = {"id": 2}
         diff_result.limit.return_value.collect.return_value = [row_mock]
-        limited1.subtract.return_value = diff_result
+        limited1.exceptAll.return_value = diff_result
 
         diff_result2 = MagicMock()
         diff_result2.count.return_value = 1
         row_mock2 = MagicMock()
         row_mock2.asDict.return_value = {"id": 99}
         diff_result2.limit.return_value.collect.return_value = [row_mock2]
-        limited2.subtract.return_value = diff_result2
+        limited2.exceptAll.return_value = diff_result2
 
         result, diffs = _check_data_integrity(df1, df2, sample_size=1000)
         assert result["passed"] is False
@@ -287,6 +292,43 @@ class TestAggregateParity:
         result = _check_aggregate_parity(df1, df2, sample_size=1000, tolerance=0.0001)
         assert result["passed"] is False
         assert "error" in result["detail"].lower()
+
+    def test_decimal_type_matching(self):
+        """DecimalType columns are compared with Decimal arithmetic, not float."""
+        from decimal import Decimal
+        fields = [("price", T.DecimalType(18, 6))]
+        df1 = _make_mock_df(fields)
+        df2 = _make_mock_df(fields)
+
+        agg1 = MagicMock()
+        agg1.__getitem__ = MagicMock(return_value=Decimal("123456789.123456"))
+        df1.limit.return_value.agg.return_value.collect.return_value = [agg1]
+
+        agg2 = MagicMock()
+        agg2.__getitem__ = MagicMock(return_value=Decimal("123456789.123456"))
+        df2.limit.return_value.agg.return_value.collect.return_value = [agg2]
+
+        result = _check_aggregate_parity(df1, df2, sample_size=1000, tolerance=0.0001)
+        assert result["passed"] is True
+
+    def test_decimal_type_mismatch(self):
+        """DecimalType mismatch is detected without float precision loss."""
+        from decimal import Decimal
+        fields = [("price", T.DecimalType(18, 6))]
+        df1 = _make_mock_df(fields)
+        df2 = _make_mock_df(fields)
+
+        agg1 = MagicMock()
+        agg1.__getitem__ = MagicMock(return_value=Decimal("100.000000"))
+        df1.limit.return_value.agg.return_value.collect.return_value = [agg1]
+
+        agg2 = MagicMock()
+        agg2.__getitem__ = MagicMock(return_value=Decimal("200.000000"))
+        df2.limit.return_value.agg.return_value.collect.return_value = [agg2]
+
+        result = _check_aggregate_parity(df1, df2, sample_size=1000, tolerance=0.0001)
+        assert result["passed"] is False
+        assert "price" in result["detail"]
 
 
 # ─── Full Validation Integration Tests (mocked) ─────────────────────────────

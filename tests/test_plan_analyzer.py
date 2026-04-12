@@ -126,7 +126,9 @@ class TestClassifyNode:
         assert _classify_node("*(2) HashAggregate(keys=[id#10])") == "HashAggregate"
 
     def test_unknown_node(self):
-        assert _classify_node("SomeWeirdThingNobodyKnows") == "Unknown"
+        # A line that starts with a lowercase word cannot be classified by any
+        # heuristic (prefix, substring, or PascalCase regex) — should be "Unknown".
+        assert _classify_node("some_unrecognized_operator [args]") == "Unknown"
 
     def test_filter(self):
         assert _classify_node("Filter (id#10 > 5)") == "Filter"

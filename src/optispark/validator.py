@@ -157,16 +157,34 @@ def _check_schema(original_df, optimized_df) -> dict:
 
 
 def _check_row_count(original_df, optimized_df, sample_size: int) -> dict:
-    """Compare row counts on a limited sample."""
+    """Compare row counts on a limited sample.
+
+    When both DataFrames return exactly ``sample_size`` rows from the limit,
+    both may have *more* rows beyond the limit and the true totals are unknown.
+    In that case the check still passes but the detail message reflects the
+    uncertainty so callers are not misled.
+    """
     try:
         orig_count = original_df.limit(sample_size).count()
         opt_count = optimized_df.limit(sample_size).count()
 
         if orig_count == opt_count:
+            if orig_count == sample_size:
+                # Both DataFrames have at least sample_size rows — full counts
+                # are unknown; we cannot confirm they are equal overall.
+                return {
+                    "name": "row_count",
+                    "passed": True,
+                    "detail": (
+                        f"Sample row counts agree ({orig_count} rows each); "
+                        f"both DataFrames have at least {sample_size} rows — "
+                        f"full counts were not compared."
+                    ),
+                }
             return {
                 "name": "row_count",
                 "passed": True,
-                "detail": f"Row counts match ({orig_count} == {opt_count}).",
+                "detail": f"Row counts match ({orig_count} rows).",
             }
         return {
             "name": "row_count",
@@ -182,7 +200,13 @@ def _check_row_count(original_df, optimized_df, sample_size: int) -> dict:
 
 
 def _check_data_integrity(original_df, optimized_df, sample_size: int) -> tuple:
-    """Use subtract() to detect row-level differences on a sample.
+    """Use exceptAll() to detect row-level differences on a sample.
+
+    ``exceptAll()`` uses multiset semantics (equivalent to SQL ``EXCEPT ALL``),
+    so rows with duplicate multiplicities are compared correctly.  Unlike
+    ``subtract()`` / ``EXCEPT DISTINCT``, it will surface bugs where the
+    optimized DataFrame has the same distinct rows but different duplicate
+    counts.
 
     Returns (check_dict, sample_diffs_dict_or_None).
     """
@@ -190,12 +214,12 @@ def _check_data_integrity(original_df, optimized_df, sample_size: int) -> tuple:
         orig_sample = original_df.limit(sample_size)
         opt_sample = optimized_df.limit(sample_size)
 
-        # Rows in original not in optimized
-        only_in_orig = orig_sample.subtract(opt_sample)
+        # Rows in original not in optimized (multiset difference)
+        only_in_orig = orig_sample.exceptAll(opt_sample)
         orig_diff_count = only_in_orig.count()
 
-        # Rows in optimized not in original
-        only_in_opt = opt_sample.subtract(orig_sample)
+        # Rows in optimized not in original (multiset difference)
+        only_in_opt = opt_sample.exceptAll(orig_sample)
         opt_diff_count = only_in_opt.count()
 
         if orig_diff_count == 0 and opt_diff_count == 0:
@@ -244,15 +268,23 @@ def _check_data_integrity(original_df, optimized_df, sample_size: int) -> tuple:
 def _check_aggregate_parity(
     original_df, optimized_df, sample_size: int, tolerance: float
 ) -> dict:
-    """Compare basic aggregates (sum) for all numeric columns within tolerance."""
+    """Compare basic aggregates (sum) for all numeric columns within tolerance.
+
+    ``DecimalType`` columns are compared using Python's ``decimal.Decimal``
+    arithmetic to avoid the precision loss that would occur when casting to
+    ``float``.  All other numeric types use ``float`` arithmetic.
+    """
     try:
+        from decimal import Decimal as PyDecimal
         from pyspark.sql import types as T
 
         numeric_types = (T.IntegerType, T.LongType, T.FloatType, T.DoubleType, T.DecimalType)
-        numeric_cols = [
-            f.name for f in original_df.schema.fields
+        numeric_fields = [
+            f for f in original_df.schema.fields
             if isinstance(f.dataType, numeric_types)
         ]
+        numeric_cols = [f.name for f in numeric_fields]
+        col_type_map = {f.name: f.dataType for f in numeric_fields}
 
         if not numeric_cols:
             return {
@@ -284,18 +316,34 @@ def _check_aggregate_parity(
             if orig_val is None or opt_val is None:
                 mismatches.append(f"{col_name}: {orig_val} vs {opt_val}")
                 continue
-            # Relative difference check
-            orig_f = float(orig_val)
-            opt_f = float(opt_val)
-            if orig_f == 0.0:
-                if opt_f != 0.0:
-                    mismatches.append(f"{col_name}: {orig_f} vs {opt_f}")
+
+            if isinstance(col_type_map.get(col_name), T.DecimalType):
+                # Use Decimal arithmetic to preserve precision for decimal columns.
+                orig_d = orig_val if isinstance(orig_val, PyDecimal) else PyDecimal(str(orig_val))
+                opt_d = opt_val if isinstance(opt_val, PyDecimal) else PyDecimal(str(opt_val))
+                zero = PyDecimal(0)
+                if orig_d == zero:
+                    if opt_d != zero:
+                        mismatches.append(f"{col_name}: {orig_d} vs {opt_d}")
+                else:
+                    rel_diff = abs(orig_d - opt_d) / abs(orig_d)
+                    if rel_diff > PyDecimal(str(tolerance)):
+                        mismatches.append(
+                            f"{col_name}: {orig_d} vs {opt_d} (diff={float(rel_diff):.6%})"
+                        )
             else:
-                rel_diff = abs(orig_f - opt_f) / abs(orig_f)
-                if rel_diff > tolerance:
-                    mismatches.append(
-                        f"{col_name}: {orig_f} vs {opt_f} (diff={rel_diff:.6%})"
-                    )
+                # Relative difference check using float arithmetic
+                orig_f = float(orig_val)
+                opt_f = float(opt_val)
+                if orig_f == 0.0:
+                    if opt_f != 0.0:
+                        mismatches.append(f"{col_name}: {orig_f} vs {opt_f}")
+                else:
+                    rel_diff = abs(orig_f - opt_f) / abs(orig_f)
+                    if rel_diff > tolerance:
+                        mismatches.append(
+                            f"{col_name}: {orig_f} vs {opt_f} (diff={rel_diff:.6%})"
+                        )
 
         if not mismatches:
             return {

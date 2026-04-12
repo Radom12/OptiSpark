@@ -133,6 +133,11 @@ def _classify_node(text: str) -> str:
         if known in cleaned:
             return known
 
+    # Priority 4: Regex fallback — extract a PascalCase token from the line.
+    regex_match = _NODE_TYPE_PATTERN.match(cleaned)
+    if regex_match:
+        return regex_match.group(1)
+
     return "Unknown"
 
 
@@ -380,7 +385,10 @@ def analyze_plan(roots: list, broadcast_threshold_bytes: int = 10 * 1024 * 1024)
             Defaults to Spark's default of 10 MB.
 
     Returns:
-        A list of PlanDiagnostic instances, deduplicated by rule_id.
+        A list of PlanDiagnostic instances.  ``SORT_MERGE_JOIN`` informational
+        findings are suppressed for nodes that already produced a
+        ``MISSING_BROADCAST`` warning, but multiple findings with the same
+        ``rule_id`` may still appear when multiple matching nodes exist.
     """
     # Flatten the forest into a single list for rule functions.
     all_nodes = []
