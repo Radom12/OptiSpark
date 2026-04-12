@@ -12,6 +12,8 @@ from datetime import datetime
 from .reasoning import ReasoningEngine
 from .parser import extract_features_from_logs, extract_features_from_system_tables
 from .safety import validate_safety, secure_exec
+from .plan_analyzer import parse_plan, analyze_plan
+from .validator import validate_optimization, build_failure_prompt
 from pyspark.sql.utils import AnalysisException
 
 
@@ -337,16 +339,32 @@ class OptiSpark:
             context["parsed_logical_plan"] = None
 
         # Spark cluster configuration and capacity
+        broadcast_threshold_bytes = 10 * 1024 * 1024  # Spark default: 10 MB
         try:
             spark = df.sparkSession
+            raw_threshold = spark.conf.get("spark.sql.autoBroadcastJoinThreshold", "10485760")
+            broadcast_threshold_bytes = int(raw_threshold)
             context["spark_conf"] = {
                 "spark.sql.shuffle.partitions": spark.conf.get("spark.sql.shuffle.partitions", "default"),
+                "spark.sql.autoBroadcastJoinThreshold": str(broadcast_threshold_bytes),
                 "spark.driver.memory": spark.conf.get("spark.driver.memory", "default"),
                 "spark.executor.memory": spark.conf.get("spark.executor.memory", "default"),
                 "spark.executor.cores": spark.conf.get("spark.executor.cores", "default"),
             }
         except Exception:
             context["spark_conf"] = None
+
+        # Structured plan analysis — parse execution plan into typed nodes and run rules
+        try:
+            plan_text = context.get("execution_plan", "")
+            if plan_text and plan_text != "Could not extract execution plan":
+                plan_nodes = parse_plan(plan_text)
+                diagnostics = analyze_plan(plan_nodes, broadcast_threshold_bytes=broadcast_threshold_bytes)
+                context["plan_diagnostics"] = [d.to_dict() for d in diagnostics]
+            else:
+                context["plan_diagnostics"] = None
+        except Exception:
+            context["plan_diagnostics"] = None
 
         return context
 
@@ -426,8 +444,15 @@ def _extract_python_blocks(text):
 def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=None, max_retries=3):
     """Execute a code block in a sandboxed environment with self-healing retries.
 
-    Returns the updated df (optimized if successful, original if not).
+    Handles three failure modes:
+    1. Execution errors (AnalysisException, runtime errors) — feeds error back to LLM
+    2. Missing assignment — code ran but didn't set optimized_df
+    3. Correctness failures — code ran, set optimized_df, but data doesn't match original
+
+    Returns the updated df (optimized if successful + validated, original if not).
     """
+    plan_diagnostics = session_state.get("df_context", {}).get("plan_diagnostics") if session_state.get("df_context") else None
+
     for attempt in range(max_retries):
         print(f"  {C.BLUE}◆{C.RESET} Executing securely in background...", end="")
         try:
@@ -436,15 +461,70 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
             local_vars = {}
             secure_exec(code_block.strip(), sandbox_env, local_vars)
 
-            if "optimized_df" in local_vars:
-                session_state["optimized_df"] = local_vars["optimized_df"]
-                print(f" {C.GREEN}✔ Success!{C.RESET}")
+            if "optimized_df" not in local_vars:
+                print(f" {C.RED}✖ Error: The code executed but did not assign 'optimized_df'.{C.RESET}")
+                if chat_session and attempt < max_retries - 1:
+                    error_prompt = (
+                        "The code you provided executed without errors but did not assign "
+                        "a value to `optimized_df`.  Please rewrite the code so that the "
+                        "final result is assigned to `optimized_df`."
+                    )
+                    print(f"\n  {C.GRAY}Feeding the error back to the agent for self-healing...{C.RESET}")
+                    session_state["message_count"] += 1
+                    _print_thinking()
+                    try:
+                        correction = chat_session.send_message(error_prompt)
+                        _print_response(correction.text, session_state["message_count"])
+                        corrected_blocks = _extract_python_blocks(correction.text)
+                        if corrected_blocks:
+                            code_block = corrected_blocks[0]
+                            session_state["last_code"] = code_block
+                            continue
+                    except Exception:
+                        pass
+                print(f"  {C.YELLOW}⚠ Could not auto-fix. You can ask the agent to try a different approach.{C.RESET}")
+                return df
+
+            optimized_df = local_vars["optimized_df"]
+            print(f" {C.GREEN}✔ Executed{C.RESET}")
+
+            # ── Correctness Validation ────────────────────────────────
+            print(f"  {C.BLUE}◆{C.RESET} Validating correctness...")
+            validation = validate_optimization(
+                df, optimized_df, attempt_number=attempt + 1
+            )
+            _print_validation_result(validation)
+
+            if validation.passed and validation.confidence_score >= 0.5:
+                session_state["optimized_df"] = optimized_df
+                print(f"  {C.GREEN}{C.BOLD}✔ Optimization accepted{C.RESET} (confidence: {validation.confidence} / {validation.confidence_score:.1f})")
                 print(f"  {C.GRAY}├─ The optimized DataFrame is now active in this chat session.{C.RESET}")
                 print(f"  {C.GRAY}└─ It will be returned when you type 'exit'.{C.RESET}")
-                return local_vars["optimized_df"]
-            else:
-                print(f" {C.RED}✖ Error: The code executed but did not assign 'optimized_df'.{C.RESET}")
-                return df
+                return optimized_df
+
+            # Validation failed — attempt self-correction
+            if chat_session and attempt < max_retries - 1:
+                print(f"\n  {C.YELLOW}⚠ Validation failed. Feeding failure context back to agent...{C.RESET}")
+                error_prompt = build_failure_prompt(
+                    validation, code_block, plan_diagnostics
+                )
+                session_state["message_count"] += 1
+                _print_thinking()
+                try:
+                    correction = chat_session.send_message(error_prompt)
+                    _print_response(correction.text, session_state["message_count"])
+                    corrected_blocks = _extract_python_blocks(correction.text)
+                    if corrected_blocks:
+                        code_block = corrected_blocks[0]
+                        session_state["last_code"] = code_block
+                        continue
+                except Exception:
+                    pass
+
+            # Exhausted retries or no chat session — reject optimization
+            print(f"  {C.YELLOW}{C.BOLD}⚠ Optimization rejected{C.RESET} — returning original DataFrame as-is.")
+            print(f"  {C.GRAY}└─ The suggested code is available via /benchmark for manual review.{C.RESET}")
+            return df
 
         except Exception as ex:
             ex_str = str(ex)
@@ -493,6 +573,37 @@ def _execute_sandbox(code_block, df, spark, kwargs, session_state, chat_session=
             return df
 
     return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Validation UI
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _print_validation_result(result):
+    """Render the validation outcome in the premium terminal format."""
+    print(f"\n  {C.CYAN}{C.BOLD}┌─ Validation {'─' * 39}┐{C.RESET}")
+
+    for check in result.checks:
+        name_display = check["name"].replace("_", " ").title()
+        if check["passed"]:
+            status = f"{C.GREEN}✔ Passed{C.RESET}"
+        else:
+            status = f"{C.RED}✖ FAILED{C.RESET}"
+        detail_short = check["detail"][:60]
+        print(f"  {C.CYAN}│{C.RESET}  {name_display + ':':<22} {status}  {C.GRAY}{detail_short}{C.RESET}")
+
+    # Confidence line
+    conf_color = C.GREEN if result.confidence == "HIGH" else (C.YELLOW if result.confidence == "MEDIUM" else C.RED)
+    print(f"  {C.CYAN}│{C.RESET}")
+    print(f"  {C.CYAN}│{C.RESET}  {'Confidence:':<22} {conf_color}{C.BOLD}{result.confidence}{C.RESET} ({result.confidence_score:.1f})")
+
+    # Decision line
+    if result.passed and result.confidence_score >= 0.5:
+        print(f"  {C.CYAN}│{C.RESET}  {'Decision:':<22} {C.GREEN}{C.BOLD}ACCEPTED{C.RESET}")
+    else:
+        print(f"  {C.CYAN}│{C.RESET}  {'Decision:':<22} {C.RED}{C.BOLD}REJECTED{C.RESET}")
+
+    print(f"  {C.CYAN}└{'─' * 55}┘{C.RESET}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
