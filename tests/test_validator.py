@@ -259,9 +259,10 @@ class TestAggregateParity:
         df1 = _make_mock_df(fields, rows=rows)
         df2 = _make_mock_df(fields, rows=rows)
 
-        # Both should return same sums
+        # Both should return same sums.
+        # Dict-based agg produces columns named "sum(col)", e.g. "sum(id)".
         agg_row = MagicMock()
-        agg_row.__getitem__ = MagicMock(side_effect=lambda k: 3 if k == "id" else 30.0)
+        agg_row.__getitem__ = MagicMock(side_effect=lambda k: 3 if k == "sum(id)" else 30.0)
         df1.limit.return_value.agg.return_value.collect.return_value = [agg_row]
         df2.limit.return_value.agg.return_value.collect.return_value = [agg_row]
 
@@ -274,11 +275,11 @@ class TestAggregateParity:
         df2 = _make_mock_df(fields)
 
         agg1 = MagicMock()
-        agg1.__getitem__ = MagicMock(side_effect=lambda k: 3 if k == "id" else 30.0)
+        agg1.__getitem__ = MagicMock(side_effect=lambda k: 3 if k == "sum(id)" else 30.0)
         df1.limit.return_value.agg.return_value.collect.return_value = [agg1]
 
         agg2 = MagicMock()
-        agg2.__getitem__ = MagicMock(side_effect=lambda k: 3 if k == "id" else 999.0)
+        agg2.__getitem__ = MagicMock(side_effect=lambda k: 3 if k == "sum(id)" else 999.0)
         df2.limit.return_value.agg.return_value.collect.return_value = [agg2]
 
         result = _check_aggregate_parity(df1, df2, sample_size=1000, tolerance=0.0001)

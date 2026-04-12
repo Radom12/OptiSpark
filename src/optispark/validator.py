@@ -273,6 +273,10 @@ def _check_aggregate_parity(
     ``DecimalType`` columns are compared using Python's ``decimal.Decimal``
     arithmetic to avoid the precision loss that would occur when casting to
     ``float``.  All other numeric types use ``float`` arithmetic.
+
+    Uses dict-based ``df.agg({'col': 'sum'})`` to avoid creating PySpark Column
+    objects on the Python client side, which requires an active SparkContext in
+    PySpark 4.x.  The result columns are named ``sum(col)`` by Spark.
     """
     try:
         from decimal import Decimal as PyDecimal
@@ -293,21 +297,24 @@ def _check_aggregate_parity(
                 "detail": "No numeric columns to compare.",
             }
 
-        import pyspark.sql.functions as F
-
         orig_sample = original_df.limit(sample_size)
         opt_sample = optimized_df.limit(sample_size)
 
-        # Build sum expressions for all numeric columns
-        sum_exprs = [F.sum(F.col(c)).alias(c) for c in numeric_cols]
+        # Use dict-based aggregation so no PySpark Column objects are created
+        # on the Python client side. PySpark 4.x requires an active SparkContext
+        # to create Column expressions (F.col(), F.sum(), etc.), which would
+        # fail in test environments that don't spin up a full SparkSession.
+        # The result columns from df.agg({'col': 'sum'}) are named "sum(col)".
+        sum_dict = {c: 'sum' for c in numeric_cols}
 
-        orig_aggs = orig_sample.agg(*sum_exprs).collect()[0]
-        opt_aggs = opt_sample.agg(*sum_exprs).collect()[0]
+        orig_aggs = orig_sample.agg(sum_dict).collect()[0]
+        opt_aggs = opt_sample.agg(sum_dict).collect()[0]
 
         mismatches = []
         for col_name in numeric_cols:
-            orig_val = orig_aggs[col_name]
-            opt_val = opt_aggs[col_name]
+            agg_key = f'sum({col_name})'
+            orig_val = orig_aggs[agg_key]
+            opt_val = opt_aggs[agg_key]
 
             # Both None — match
             if orig_val is None and opt_val is None:
